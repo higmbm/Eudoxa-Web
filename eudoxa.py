@@ -84,6 +84,45 @@ class Aspect:
     def __repr__(self):
         return (f"Aspect(name='{self.name}', data_type='{self.data_type.__name__}', "
                 f"description='{self.description}', levels={list(self.levels.keys())})")
+    
+    def to_dict(self):
+        return {
+            "name": self.name,
+            "data_type": self.data_type.__name__,
+            "description": self.description,
+            "levels": self.levels,  # dict[str, str]
+            "vdiffs": [
+                {
+                    "from_level": vd.from_level,
+                    "to_level": vd.to_level
+                }
+                for vd in self.vdiffs
+            ]
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        asp = cls(
+            name=data["name"],
+            data_type=str_to_type(data["data_type"]),
+            description=data.get("description")
+        )
+    
+        # Återskapa levels
+        for level, desc in data["levels"].items():
+            asp.levels[level] = desc
+    
+        # Återskapa vdiffs
+        asp.vdiffs = [
+            VDiff(
+                aspect_name=data["name"],
+                from_level=vd["from_level"],
+                to_level=vd["to_level"]
+            )
+            for vd in data["vdiffs"]
+        ]
+    
+        return asp
 
 class Consequence:
     def __init__(self, aspect_levels = {}):
@@ -104,6 +143,23 @@ class Consequence:
     def __repr__(self):
 #        return "〈" + ", ".join(f"{k}={v}" for k, v in self.aspect_levels.items()) + "〉"
         return "⟨" + ", ".join(f"{v}" for v in self.aspect_levels.values()) + "⟩"
+    
+    def to_dict(self):
+        """Serialiserar Consequence till en enkel dict."""
+        return {
+            "aspect_levels": self.aspect_levels
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        """Skapar ett Consequence-objekt från en dict med nyckeln 'aspect_levels'."""
+        # Skydda mot None eller saknad nyckel – fall tillbaka till tom dict
+        aspect_levels = data.get("aspect_levels", {}) if isinstance(data, dict) else {}
+        # Se till att alla värden är str eller None (i linje med användningen i koden)
+        cleaned = {}
+        for k, v in aspect_levels.items():
+            cleaned[str(k)] = None if v is None else str(v)
+        return cls(cleaned)
 
 class VDiff:
 #    zero: 'VDiff'
@@ -141,7 +197,7 @@ class VDiff:
         from_level = self.from_level if self.from_level is not None else '*'
         to_level = self.to_level if self.to_level is not None else '*'
         return f"Δ({from_level},{to_level})"
-
+    
 def str_to_vdiff(aspect_name: str, vdiff_str: str) -> VDiff:
     levels = eval(vdiff_str[1:])
     if levels[0] == '*' and levels[1] == '*':
@@ -1045,42 +1101,37 @@ class EudoxaManager:
         return result
 
     def to_dict(self):
+        """Serialiserar hela EudoxaManager till en ren datastruktur."""
         return {
             "aspects": {
-                name: {
-                    "data_type": aspect.data_type.__name__,
-                    "description": aspect.description,
-                    "levels": aspect.levels,          # dict[str, str]
-                    "vdiffs": [
-                        (vd.from_level, vd.to_level)
-                        for vd in aspect.vdiffs
-                    ]
-                }
+                name: aspect.to_dict()
                 for name, aspect in self.aspects.items()
             },
             "consequences": {
-                short: c.aspect_levels
+                short: c.to_dict()
                 for short, c in self.consequences.items()
             }
+            # Om du senare vill, kan vi lägga till:
+            # "vdiff_comparison_matrix": <serialiserad version>
         }
-
 
     @classmethod
     def from_dict(cls, data):
+        """
+        Återskapar en EudoxaManager från en serialiserad dict.
+        Förutsätter att data innehåller:
+          - "aspects": { name: <Aspect-dict> }
+          - "consequences": { short: <Consequence-dict> }
+        """
         mgr = cls()
     
-        # Återskapa aspekter
-        for name, a in data["aspects"].items():
-            asp = mgr.add_aspect(
-                name,
-                a["data_type"],
-                a["description"]
-            )
-            for level, desc in a["levels"].items():
-                asp.add_level(level, desc)
+        # --- Återskapa aspekter ---
+        for name, a_data in data["aspects"].items():
+            asp = Aspect.from_dict(a_data)
+            mgr.aspects[name] = asp
     
-        # Återskapa consequences
-        for short, levels in data["consequences"].items():
-            mgr.add_consequence(short, levels)
+        # --- Återskapa consequences ---
+        for short, c_data in data["consequences"].items():
+            mgr.consequences[short] = Consequence.from_dict(c_data)
     
         return mgr
