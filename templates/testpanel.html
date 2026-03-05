@@ -57,23 +57,27 @@
       <button class="primary" id="btnAddAspect">Lägg till aspekt (POST)</button>
     </section>
 
-    <!-- Nivåer -->
-    <section class="card">
-      <h2>Nivåer</h2>
-      <div class="row">
-        <label>Aspekt</label>
-        <input id="levelAspectName" type="text" placeholder="t.ex. Ekonomi">
-      </div>
-      <div class="row">
-        <label>Nivå</label>
-        <input id="levelValue" type="text" placeholder="t.ex. Hög">
-      </div>
-      <div class="row">
-        <label>Beskrivning</label>
-        <input id="levelDesc" type="text">
-      </div>
-      <button class="primary" id="btnAddLevel">Lägg till nivå (POST)</button>
-    </section>
+	<!-- Nivåer -->
+	<section class="card">
+	    <h2>Nivåer</h2>
+	
+	    <div class="row">
+	        <label>Aspekt</label>
+	        <select id="levelAspectSelect"></select>
+	    </div>
+	
+	    <div class="row">
+	        <label>Nivå</label>
+	        <input id="levelValue" type="text" placeholder="t.ex. Hög">
+	    </div>
+	
+	    <div class="row">
+	        <label>Beskrivning</label>
+	        <input id="levelDesc" type="text">
+	    </div>
+	
+	    <button class="primary" id="btnAddLevel">Lägg till nivå (POST)</button>
+	</section>
 
     <!-- Konsekvenser -->
     <section class="card">
@@ -100,6 +104,27 @@
   </div>
 
   <script>
+	  async function loadAspectDropdown() {
+		    const res = await fetch("/api/aspects");
+		    const data = await res.json();
+		    const select = document.getElementById("levelAspectSelect");
+		    select.innerHTML = "";
+	
+		    if (!data.rows) return;
+	
+		    data.rows.forEach(row => {
+		        const aspectName = row[0]; // första kolumnen = namn
+		        const opt = document.createElement("option");
+		        opt.value = aspectName;
+		        opt.textContent = aspectName;
+		        select.appendChild(opt);
+		    });
+		}
+
+	  document.addEventListener("DOMContentLoaded", () => {
+	      loadAspectDropdown();
+	  });
+
     const logEl = document.getElementById("log");
     const log = (...args) => {
       logEl.textContent += args.join(" ") + "\n";
@@ -151,15 +176,24 @@
     };
 
     // Nivå
-    document.getElementById("btnAddLevel").onclick = async () => {
-      const aspect = document.getElementById("levelAspectName").value.trim();
-      const level = document.getElementById("levelValue").value.trim();
-      const description = document.getElementById("levelDesc").value.trim() || null;
-      if (!aspect || !level) { log("❌ Ange aspekt och nivå."); return; }
-
-      await api(`/api/aspects/${encodeURIComponent(aspect)}/levels`, "POST", { level, description });
-      await api("/api/project");
-    };
+	document.getElementById("btnAddLevel").onclick = async () => {
+	    const aspect = document.getElementById("levelAspectSelect").value;
+	    const level = document.getElementById("levelValue").value.trim();
+	    const description = document.getElementById("levelDesc").value.trim() || null;
+	
+	    if (!aspect || !level) {
+	        log("❌ Ange nivå och välj aspekt.");
+	        return;
+	    }
+	
+	    await api(`/api/aspects/${encodeURIComponent(aspect)}/levels`, "POST", { level, description });
+	
+	    // Visa uppdaterat state
+	    await api("/api/project");
+	
+	    // Uppdatera dropdownen ifall nya nivåer lades till
+	    loadAspectDropdown();
+	};
 
     // Konsekvens
     document.getElementById("btnAddConsequence").onclick = async () => {

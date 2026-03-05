@@ -123,6 +123,11 @@ def aspects_html():
 
     return render_template("aspects.html", rows=table_rows)
 
+@app.get("/api/aspect-names")
+def get_aspect_names():
+    mgr = load_manager_or_400()
+    return {"aspects": list(mgr.aspects.keys())}, 200
+
 @app.post("/api/aspects")
 def add_aspect():
     mgr = load_manager_or_400()
