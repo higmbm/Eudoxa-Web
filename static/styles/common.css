@@ -1,60 +1,106 @@
-.text-muted, .muted, .subtitle, .hint { color: #555; }
+/* ============================================================
+   common.css  –  Shared base styles for all pages
+   ============================================================ */
 
-body { font-family: system-ui, -apple-system, sans-serif; }
+/* --- Reset / Base ----------------------------------------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
 
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  margin: 2rem;
+  color: #1a1a1a;
+}
+
+/* --- Typography helpers ------------------------------------ */
+.text-muted,
+.muted,
+.subtitle,
+.hint {
+  color: #555;
+  font-size: 0.9rem;
+}
+
+/* --- Layout ----------------------------------------------- */
 .container {
-    width: 90%;
-    max-width: 900px;
-    margin: 0 auto;
+  width: 90%;
+  max-width: 900px;
+  margin: 0 auto;
 }
 
-.data-table {
-    border-collapse: collapse;
-    width: 100%;
-}
-
-.data-table th,
-.data-table td {
-    border: 1px solid #444;
-    padding: 6px;
-}
-
-.data-table th {
-    background: #eee;
-}
-
-/* Om vissa tabeller ska vara smalare */
-.data-table.narrow {
-    width: 60%;
-    margin: 0 auto;
-}
-
-.back-link {
-    margin-top: 1rem;
-}
-
-.back-link a {
-    text-decoration: none;
-    color: #0066cc;
-}
-
-.back-link a:hover {
-    text-decoration: underline;
-}
-
-.page-header h2 {
-    text-align: center;
-    margin-bottom: 1rem;
-}
-
+/* --- Form controls (shared baseline) ---------------------- */
 button {
+  padding: 0.45rem 0.8rem;
+  font-size: 1rem;
   border: 1px solid #999;
   border-radius: 6px;
   background: #f6f6f6;
   cursor: pointer;
 }
 
-input[type="text"], textarea, select {
+button:hover {
+  background: #ebebeb;
+}
+
+input[type="text"],
+textarea,
+select {
+  padding: 0.4rem 0.6rem;
+  font-size: 1rem;
   border: 1px solid #ccc;
   border-radius: 6px;
+}
+
+/* --- Tables ----------------------------------------------- */
+.data-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.data-table th,
+.data-table td {
+  border: 1px solid #ccc;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.data-table th {
+  background: #f0f0f0;
+}
+
+.data-table tr:nth-child(even) td {
+  background: #fafafa;
+}
+
+.data-table.narrow {
+  max-width: 600px;
+}
+
+/* --- Page header ------------------------------------------ */
+.page-header h2 {
+  text-align: center;
+  margin-bottom: 1rem;
+}
+
+/* --- Back link -------------------------------------------- */
+.back-link {
+  margin-top: 1rem;
+}
+
+.back-link a {
+  text-decoration: none;
+  color: #0066cc;
+}
+
+.back-link a:hover {
+  text-decoration: underline;
+}
+
+/* --- Utility ---------------------------------------------- */
+.error {
+  color: #b00020;
+  margin-top: 0.5rem;
 }

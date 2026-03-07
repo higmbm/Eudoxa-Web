@@ -1,58 +1,40 @@
 <!doctype html>
 <html lang="sv">
 <head>
-    <meta charset="utf-8" />
-    <title>Aspekter</title>
-    <style>
-        body {
-            font-family: system-ui, sans-serif;
-            margin: 2rem;
-        }
-        table {
-            border-collapse: collapse;
-            width: 100%;
-        }
-        th, td {
-            border: 1px solid #ccc;
-            padding: 8px 10px;
-        }
-        th {
-            background: #f0f0f0;
-            text-align: left;
-        }
-        tr:nth-child(even) {
-            background: #fafafa;
-        }
-    </style>
+  <meta charset="utf-8">
+  <title>Aspekter</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles/common.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles/aspects.css') }}">
 </head>
 <body>
 
-<h1>Aspekter</h1>
+  <h1>Aspekter</h1>
 
-<p><a href="/testpanel">&larr; Tillbaka till testpanelen</a></p>
+  <p class="back-link"><a href="/testpanel">&larr; Tillbaka till testpanelen</a></p>
 
-<table>
+  <table class="data-table aspects-table">
     <thead>
-        <tr>
-            <th>Namn</th>
-            <th>Datatyp</th>
-            <th>Beskrivning</th>
-            <th>Nivåer</th>
-            <th>#Δ</th>
-        </tr>
+      <tr>
+        <th>Namn</th>
+        <th>Datatyp</th>
+        <th>Beskrivning</th>
+        <th>Nivåer</th>
+        <th>#Δ</th>
+      </tr>
     </thead>
     <tbody>
-        {% for row in rows %}
-        <tr>
-            <td>{{ row.name }}</td>
-            <td>{{ row.dtype }}</td>
-            <td>{{ row.description }}</td>
-            <td><a href="/aspects/{{ row.name }}/levels">Visa</a></td>
-            <td style="text-align: right">{{ row.vdiffs }}</td>
-        </tr>
-        {% endfor %}
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.name }}</td>
+        <td>{{ row.dtype }}</td>
+        <td>{{ row.description }}</td>
+        <td><a href="/aspects/{{ row.name }}/levels">Visa</a></td>
+        <td>{{ row.vdiffs }}</td>
+      </tr>
+      {% endfor %}
     </tbody>
-</table>
+  </table>
 
 </body>
 </html>

@@ -1,23 +1,11 @@
-body {
-    font-family: system-ui, sans-serif;
-    margin: 2rem;
-}
+/* ============================================================
+   aspects.css  –  Page-specific styles for aspects.html
+   ============================================================ */
 
-table {
-    border-collapse: collapse;
-    width: 100%;
-}
+/* The aspects table should fill the full container width,
+   which is already handled by .data-table in common.css.
+   Add any aspects-only overrides below. */
 
-th, td {
-    border: 1px solid #ccc;
-    padding: 8px 10px;
-}
-
-th {
-    background: #f0f0f0;
-    text-align: left;
-}
-
-tr:nth-child(even) {
-    background: #fafafa;
+.aspects-table td:last-child {
+  text-align: right; /* right-align the #Δ count column */
 }

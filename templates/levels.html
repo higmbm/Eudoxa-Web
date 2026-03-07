@@ -1,43 +1,40 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="sv">
 <head>
-    <meta charset="UTF-8">
-    <title>Nivåer för aspekt: {{ aspect_name }}</title>
-
-    <!-- Gemensamma stilar -->
-    <link rel="stylesheet" href="/static/css/common.css">
-
-    <!-- Sidunika stilar (frivilligt) -->
-    <link rel="stylesheet" href="/static/css/levels.css">
+  <meta charset="utf-8">
+  <title>Nivåer för aspekt: {{ aspect_name }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles/common.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles/levels.css') }}">
 </head>
-
 <body>
-    <header class="page-header">
-        <h2>Nivåer för aspekt: {{ aspect_name }}</h2>
-    </header>
 
-    <main class="container">
-        <table class="data-table narrow">
-            <thead>
-                <tr>
-                    <th>Nivå</th>
-                    <th>Beskrivning</th>
-                </tr>
-            </thead>
+  <header class="page-header">
+    <h2>Nivåer för aspekt: {{ aspect_name }}</h2>
+  </header>
 
-            <tbody>
-                {% for row in rows %}
-                <tr>
-                    <td>{{ row.level }}</td>
-                    <td>{{ row.description }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+  <main class="container">
+    <table class="data-table narrow">
+      <thead>
+        <tr>
+          <th>Nivå</th>
+          <th>Beskrivning</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.level }}</td>
+          <td>{{ row.description }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
 
-        <p class="back-link">
-            <a href="/aspects">Tillbaka till aspekter</a>
-        </p>
-    </main>
+    <p class="back-link">
+      <a href="/aspects">&larr; Tillbaka till aspekter</a>
+    </p>
+  </main>
+
 </body>
 </html>

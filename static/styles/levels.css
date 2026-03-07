@@ -1,6 +1,8 @@
-/* levels.css */
-/* Endast små justeringar som inte passar i common.css */
+/* ============================================================
+   levels.css  –  Page-specific styles for levels.html
+   ============================================================ */
 
+/* Levels table is narrower than the default full-width table */
 .data-table.narrow {
-    max-width: 600px;
+  max-width: 600px;
 }

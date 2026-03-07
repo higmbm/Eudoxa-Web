@@ -1,3 +1,19 @@
+/* ============================================================
+   testpanel.css  –  Page-specific styles for testpanel.html
+   ============================================================ */
+
+:root {
+  --gap: 14px;
+}
+
+/* --- Layout ----------------------------------------------- */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--gap);
+}
+
+/* --- Cards ------------------------------------------------ */
 .card {
   border: 1px solid #ddd;
   border-radius: 10px;
@@ -9,29 +25,7 @@
   font-size: 1.1rem;
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit,minmax(320px,1fr));
-  gap: var(--gap);
-}
-
-.hint {
-  font-size: .9rem;
-}
-
-.kv {
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-}
-
-.log {
-  white-space: pre-wrap;
-  background: #0b1020;
-  color: #e7f0ff;
-  padding: 10px;
-  border-radius: 8px;
-  min-height: 120px;
-}
-
+/* --- Form rows inside cards ------------------------------- */
 .row {
   display: flex;
   gap: 8px;
@@ -39,20 +33,29 @@
   margin-bottom: 8px;
 }
 
-.subtitle {
-  margin: 0 0 20px 0;
+label {
+  min-width: 120px;
 }
 
-:root {
-  --gap: 14px;
+input[type="text"],
+select,
+textarea {
+  flex: 1;
 }
 
-body {
-  margin: 20px;
+textarea {
+  min-height: 70px;
 }
 
-button {
-  padding: 8px 12px;
+/* --- Buttons (testpanel variants) ------------------------- */
+button.primary {
+  background: #0b5cff;
+  border-color: #0b5cff;
+  color: white;
+}
+
+button.primary:hover {
+  background: #0048d4;
 }
 
 button.danger {
@@ -61,32 +64,27 @@ button.danger {
   color: white;
 }
 
-button.primary {
-  background: #0b5cff;
-  border-color: #0b5cff;
-  color: white;
+button.danger:hover {
+  background: #8c0019;
 }
 
+/* --- Log output ------------------------------------------- */
+.log {
+  white-space: pre-wrap;
+  background: #0b1020;
+  color: #e7f0ff;
+  padding: 10px;
+  border-radius: 8px;
+  min-height: 120px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+}
+
+/* --- Page headings ---------------------------------------- */
 h1 {
   margin-bottom: 4px;
 }
 
-input[type="text"] {
-  padding: 8px;
-  flex: 1;
-}
-
-label {
-  min-width: 120px;
-}
-
-select {
-  padding: 8px;
-  flex: 1;
-}
-
-textarea {
-  padding: 8px;
-  flex: 1;
-  min-height: 70px;
+.subtitle {
+  margin: 0 0 20px 0;
 }
