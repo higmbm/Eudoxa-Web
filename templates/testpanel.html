@@ -1,49 +1,49 @@
 <!doctype html>
-<html lang="sv">
+<html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Eudoxa – Testpanel</title>
+  <title>Eudoxa – Test Panel</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="{{ url_for('static', filename='styles/common.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='styles/testpanel.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles/testpanel.css') }}">
 </head>
 
 <body>
-  <h1>Eudoxa – Testpanel</h1>
-  <p class="subtitle">Testa RESTful endpoints i webbläsaren. Allt lagras i Flask‑sessionen.</p>
+  <h1>Eudoxa – Test Panel</h1>
+  <p class="subtitle">Test RESTful endpoints in the browser. All state is stored in the Flask session.</p>
 
   <div class="grid">
 
-    <!-- Projekt -->
+    <!-- Project -->
     <section class="card">
-      <h2>Projekt</h2>
+      <h2>Project</h2>
       <div class="row">
-        <label>Projektnamn</label>
-        <input id="projectName" type="text" placeholder="t.ex. Testprojekt">
+        <label>Project name</label>
+        <input id="projectName" type="text" placeholder="e.g. My Project">
       </div>
       <div class="row">
-        <button class="primary" id="btnCreateProject">Skapa (POST)</button>
-        <button id="btnRenameProject">Byt namn (PUT)</button>
+        <button class="primary" id="btnCreateProject">Create (POST)</button>
+        <button id="btnRenameProject">Rename (PUT)</button>
       </div>
       <div class="row">
-        <button id="btnGetProject">Hämta (GET)</button>
-        <button class="danger" id="btnDeleteProject">Radera (DELETE)</button>
+        <button id="btnGetProject">Get (GET)</button>
+        <button class="danger" id="btnDeleteProject">Delete (DELETE)</button>
       </div>
       <p class="hint">
-        POST skapar nytt projekt om inget finns (409 om redan finns).
-        PUT byter namn på befintligt projekt (404 om inget projekt).
+        POST creates a new project if none exists (409 if one already exists).
+        PUT renames the current project (404 if no project exists).
       </p>
     </section>
 
-    <!-- Aspekter -->
+    <!-- Aspects -->
     <section class="card">
-      <h2>Aspekter</h2>
+      <h2>Aspects</h2>
       <div class="row">
-        <label>Namn</label>
-        <input id="aspectName" type="text" placeholder="t.ex. Ekonomi">
+        <label>Name</label>
+        <input id="aspectName" type="text" placeholder="e.g. Economy">
       </div>
       <div class="row">
-        <label>Typ</label>
+        <label>Type</label>
         <select id="aspectType">
           <option value="str">str</option>
           <option value="int">int</option>
@@ -51,88 +51,78 @@
         </select>
       </div>
       <div class="row">
-        <label>Beskrivning</label>
+        <label>Description</label>
         <input id="aspectDesc" type="text">
       </div>
-      <button class="primary" id="btnAddAspect">Lägg till aspekt (POST)</button>
-      <button id="btnListAspects">Lista aspekter (GET)</button>
+      <button class="primary" id="btnAddAspect">Add aspect (POST)</button>
+      <button id="btnListAspects">List aspects (GET)</button>
     </section>
 
-	<!-- Nivåer -->
-	<section class="card">
-	  <h2>Nivåer</h2>
-	
-	  <div class="row">
-	    <label>Aspekt</label>
-	    <select id="levelAspectSelect"></select>
-	  </div>
-	
-	  <div class="row">
-	    <label>Nivå</label>
-	    <input id="levelValue" type="text" placeholder="t.ex. Hög">
-	  </div>
-	
-	  <div class="row">
-	    <label>Beskrivning</label>
-	    <input id="levelDesc" type="text">
-	  </div>
-	
-	  <button class="primary" id="btnAddLevel">Lägg till nivå (POST)</button>
-	  <button id="btnShowLevels">Visa aspektnivåer (GET)</button>
-	</section>
-
-    <!-- Konsekvenser -->
+    <!-- Levels -->
     <section class="card">
-      <h2>Konsekvenser</h2>
+      <h2>Levels</h2>
+
       <div class="row">
-        <label>Kortnamn</label>
-        <input id="consShort" type="text" placeholder="t.ex. C1">
+        <label>Aspect</label>
+        <select id="levelAspectSelect"></select>
+      </div>
+
+      <div class="row">
+        <label>Level</label>
+        <input id="levelValue" type="text" placeholder="e.g. High">
+      </div>
+
+      <div class="row">
+        <label>Description</label>
+        <input id="levelDesc" type="text">
+      </div>
+
+      <button class="primary" id="btnAddLevel">Add level (POST)</button>
+      <button id="btnShowLevels">Show aspect levels (GET)</button>
+    </section>
+
+    <!-- Consequences -->
+    <section class="card">
+      <h2>Consequences</h2>
+      <div class="row">
+        <label>Short name</label>
+        <input id="consShort" type="text" placeholder="e.g. C1">
       </div>
       <div>
         <label>Levels (JSON dictionary)</label>
-        <textarea id="consLevels" placeholder='{"Ekonomi":"Hög"}'></textarea>
+        <textarea id="consLevels" placeholder='{"Economy":"High"}'></textarea>
       </div>
-      <button class="primary" id="btnAddConsequence">Lägg till konsekvens (POST)</button>
-      <p class="hint">Format: {"Aspekt":"Nivå", ...}</p>
+      <button class="primary" id="btnAddConsequence">Add consequence (POST)</button>
+      <p class="hint">Format: {"Aspect":"Level", ...}</p>
     </section>
 
-    <!-- Logg -->
+    <!-- Log -->
     <section class="card">
-      <h2>Logg</h2>
-      <button id="btnClearLog">Rensa logg</button>
+      <h2>Log</h2>
+      <button id="btnClearLog">Clear log</button>
       <div id="log" class="log"></div>
     </section>
 
   </div>
 
   <script>
-	 async function loadAspectDropdown() {
-	    const res = await fetch("/api/aspects");
-	    const data = await res.json();
-	    const select = document.getElementById("levelAspectSelect");
-	    select.innerHTML = "";
-	
-	    if (!data.rows) return;
-	
-	    data.rows.forEach(row => {
-	        const aspectName = row[0]; // första kolumnen = namn
-	        const opt = document.createElement("option");
-	        opt.value = aspectName;
-	        opt.textContent = aspectName;
-	        select.appendChild(opt);
-	    });
-	}
-	
-	document.getElementById("btnShowLevels").onclick = () => {
-	  const aspect = document.getElementById("levelAspectSelect").value;
-	  if (!aspect) {
-	    log("❌ Ingen aspekt vald.");
-	    return;
-	  }
-	  // Gör en ren sidnavigering till HTML-vyn (inte fetch)
-	  window.location.href = `/aspects/${encodeURIComponent(aspect)}/levels`;
-	};
-		
+    async function loadAspectDropdown() {
+      const res = await fetch("/api/aspects");
+      const data = await res.json();
+      const select = document.getElementById("levelAspectSelect");
+      select.innerHTML = "";
+
+      if (!data.rows) return;
+
+      data.rows.forEach(row => {
+        const aspectName = row[0]; // first column = name
+        const opt = document.createElement("option");
+        opt.value = aspectName;
+        opt.textContent = aspectName;
+        select.appendChild(opt);
+      });
+    }
+
     const logEl = document.getElementById("log");
     const log = (...args) => {
       logEl.textContent += args.join(" ") + "\n";
@@ -151,16 +141,16 @@
       return { res, json };
     }
 
-    // Projekt
+    // Project
     document.getElementById("btnCreateProject").onclick = async () => {
       const name = document.getElementById("projectName").value.trim();
-      if (!name) { log("❌ Ange projektnamn."); return; }
+      if (!name) { log("❌ Enter a project name."); return; }
       await api("/api/project", "POST", { project_name: name });
     };
 
     document.getElementById("btnRenameProject").onclick = async () => {
       const name = document.getElementById("projectName").value.trim();
-      if (!name) { log("❌ Ange nytt projektnamn."); return; }
+      if (!name) { log("❌ Enter a new project name."); return; }
       await api("/api/project", "PUT", { project_name: name });
     };
 
@@ -172,80 +162,74 @@
       await api("/api/project", "DELETE");
     };
 
-    // Aspekt
-	document.getElementById("btnAddAspect").onclick = async () => {
-	    const name = document.getElementById("aspectName").value.trim();
-	    const data_type = document.getElementById("aspectType").value;
-	    const description = document.getElementById("aspectDesc").value.trim();
-	
-	    if (!name) { 
-	        log("❌ Ange aspektnamn."); 
-	        return; 
-	    }
-	
-	    await api("/api/aspects", "POST", { name, data_type, description });
-	
-	    // 🔄 UPPDATERA DROPDOWNEN!
-	    await loadAspectDropdown();
-	
-	    // Visa projektets state
-	    await api("/api/project");
-	};
-	
-	document.getElementById("btnListAspects").onclick = () => {
-	    window.location.href = "/aspects";
-	};
-    
-    // Nivå
-	document.getElementById("btnAddLevel").onclick = async () => {
-	    const aspect = document.getElementById("levelAspectSelect").value;
-	    const level = document.getElementById("levelValue").value.trim();
-	    const description = document.getElementById("levelDesc").value.trim() || null;
-	
-	    if (!aspect || !level) {
-	        log("❌ Ange nivå och välj aspekt.");
-	        return;
-	    }
-	
-	    await api(`/api/aspects/${encodeURIComponent(aspect)}/levels`, "POST", { level, description });
-	
-	    // Visa uppdaterat state
-	    await api("/api/project");
-	
-	    // Uppdatera dropdownen ifall nya nivåer lades till
-	    loadAspectDropdown();
-	};
+    // Aspects
+    document.getElementById("btnAddAspect").onclick = async () => {
+      const name = document.getElementById("aspectName").value.trim();
+      const data_type = document.getElementById("aspectType").value;
+      const description = document.getElementById("aspectDesc").value.trim();
 
-	// Visa nivåer för vald aspekt
-	document.getElementById("btnShowLevels").onclick = async () => {
-	    const aspect = document.getElementById("levelAspectSelect").value;
+      if (!name) {
+        log("❌ Enter an aspect name.");
+        return;
+      }
 
-	    if (!aspect) {
-	        log("❌ Ingen aspekt vald.");
-	        return;
-	    }
+      await api("/api/aspects", "POST", { name, data_type, description });
 
-	    await api(`/api/aspects/${encodeURIComponent(aspect)}/levels`, "GET");
+      // Refresh the aspect dropdown
+      await loadAspectDropdown();
 
-	    // Om du vill uppdatera projektvisningen efteråt:
-	    // await api("/api/project");
-	};
-	
-    // Konsekvens
+      // Show project state
+      await api("/api/project");
+    };
+
+    document.getElementById("btnListAspects").onclick = () => {
+      window.location.href = "/aspects";
+    };
+
+    // Levels
+    document.getElementById("btnAddLevel").onclick = async () => {
+      const aspect = document.getElementById("levelAspectSelect").value;
+      const level = document.getElementById("levelValue").value.trim();
+      const description = document.getElementById("levelDesc").value.trim() || null;
+
+      if (!aspect || !level) {
+        log("❌ Enter a level and select an aspect.");
+        return;
+      }
+
+      await api(`/api/aspects/${encodeURIComponent(aspect)}/levels`, "POST", { level, description });
+
+      // Show updated state
+      await api("/api/project");
+
+      // Refresh dropdown in case new aspects were added
+      loadAspectDropdown();
+    };
+
+    document.getElementById("btnShowLevels").onclick = () => {
+      const aspect = document.getElementById("levelAspectSelect").value;
+      if (!aspect) {
+        log("❌ No aspect selected.");
+        return;
+      }
+      window.location.href = `/aspects/${encodeURIComponent(aspect)}/levels`;
+    };
+
+    // Consequences
     document.getElementById("btnAddConsequence").onclick = async () => {
       const short_name = document.getElementById("consShort").value.trim();
-      if (!short_name) { log("❌ Ange kortnamn."); return; }
+      if (!short_name) { log("❌ Enter a short name."); return; }
       let levels = {};
       try { levels = JSON.parse(document.getElementById("consLevels").value.trim()); }
-      catch { log("❌ Ogiltig JSON i konsekvensnivåer."); return; }
+      catch { log("❌ Invalid JSON in consequence levels."); return; }
 
       await api("/api/consequences", "POST", { short_name, aspect_levels: levels });
       await api("/api/project");
     };
 
-    // Rensa logg
+    // Clear log
     document.getElementById("btnClearLog").onclick = () => { logEl.textContent = ""; };
-    
+
     window.addEventListener("DOMContentLoaded", loadAspectDropdown);
   </script>
 </body>

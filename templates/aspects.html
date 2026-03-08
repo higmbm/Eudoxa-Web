@@ -1,25 +1,25 @@
 <!doctype html>
-<html lang="sv">
+<html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Aspekter</title>
+  <title>Aspects</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="{{ url_for('static', filename='styles/common.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='styles/aspects.css') }}">
 </head>
 <body>
 
-  <h1>Aspekter</h1>
+  <h1>Aspects</h1>
 
-  <p class="back-link"><a href="/testpanel">&larr; Tillbaka till testpanelen</a></p>
+  <p class="back-link"><a href="/testpanel">&larr; Back to test panel</a></p>
 
   <table class="data-table aspects-table">
     <thead>
       <tr>
-        <th>Namn</th>
-        <th>Datatyp</th>
-        <th>Beskrivning</th>
-        <th>Nivåer</th>
+        <th>Name</th>
+        <th>Data type</th>
+        <th>Description</th>
+        <th>Levels</th>
         <th>#Δ</th>
       </tr>
     </thead>
@@ -29,7 +29,7 @@
         <td>{{ row.name }}</td>
         <td>{{ row.dtype }}</td>
         <td>{{ row.description }}</td>
-        <td><a href="/aspects/{{ row.name }}/levels">Visa</a></td>
+        <td><a href="/aspects/{{ row.name }}/levels">View</a></td>
         <td>{{ row.vdiffs }}</td>
       </tr>
       {% endfor %}
