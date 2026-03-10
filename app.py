@@ -299,6 +299,29 @@ def get_consequences():
 
     return {"headers": headers, "rows": rows}, 200
     
+@app.get("/api/consequence_space")
+def get_consequence_space():
+    """
+    Return the consequence space as JSON:
+    { "headers": [...], "rows": [...] }
+    One column per aspect, one row per consequence in the space.
+    """
+    mgr = load_manager_or_400()
+
+    aspects = list(mgr.aspects.values())
+
+    headers = [a.name for a in aspects]
+
+    rows = []
+    for consequence in mgr.consequence_space:
+        row = [
+            "" if consequence[a.name] is None else str(consequence[a.name])
+            for a in aspects
+        ]
+        rows.append(row)
+
+    return {"headers": headers, "rows": rows}, 200
+
 @app.post("/api/consequences")
 def add_consequence():
     mgr = load_manager_or_400()

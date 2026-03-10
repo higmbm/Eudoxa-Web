@@ -97,6 +97,13 @@
       <p class="hint">Format: {"Aspect":"Level", ...}</p>
     </section>
 
+    <!-- Consequence space -->
+    <section class="card">
+      <h2>Consequence space</h2>
+      <button id="btnGetConsequenceSpace">Fetch consequence space (GET)</button>
+      <p class="hint">Returns all possible consequence combinations given current aspects and levels.</p>
+    </section>
+
     <!-- Log -->
     <section class="card">
       <h2>Log</h2>
@@ -231,6 +238,11 @@
     // Consequences
     document.getElementById("btnListConsequences").onclick = () => {
       window.location.href = "/consequences";
+    };
+
+    // Consequence space
+    document.getElementById("btnGetConsequenceSpace").onclick = async () => {
+      await api("/api/consequence_space");
     };
 
     // Clear log
