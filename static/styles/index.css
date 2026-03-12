@@ -33,7 +33,26 @@
   margin-bottom: 0.75rem;
 }
 
-/* ── Add forms (aspects and consequences) ──────────────────── */
+/* ── Add-aspect tfoot row ───────────────────────────────────── */
+.add-aspect-foot tr.add-aspect-inputs td {
+  background: #f0f4ff;
+  border-top: 2px solid #7aa0e0;
+  padding: 6px 8px;
+}
+
+.add-aspect-foot tr.add-aspect-inputs td input,
+.add-aspect-foot tr.add-aspect-inputs td select {
+  width: 100%;
+}
+
+.add-aspect-foot tr.add-aspect-action td {
+  background: #f0f4ff;
+  border-top: none;
+  padding: 6px 8px 8px;
+  text-align: right;
+}
+
+/* ── Add-consequence form (label + input rows) ──────────────── */
 .add-form {
   display: flex;
   flex-direction: column;
