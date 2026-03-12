@@ -33,6 +33,28 @@
   margin-bottom: 0.75rem;
 }
 
+.section-header {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.section-header h2 {
+  margin: 0;
+}
+
+.section-header {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.section-header h2 {
+  margin: 0;
+}
+
 /* ── Add-aspect tfoot row ───────────────────────────────────── */
 .add-aspect-foot tr.add-aspect-inputs td {
   background: #f0f4ff;
