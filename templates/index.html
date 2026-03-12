@@ -60,38 +60,50 @@
           </tr>
           <tr class="add-aspect-action">
             <td colspan="3">
-              <button id="btnAddAspect" class="primary">Add aspect</button>
+              <div class="consequence-action-row">
+                <span class="action-spacer"></span>
+                <button id="btnAddAspect" class="primary">Add aspect</button>
+                <button id="btnClearAspectForm">Clear</button>
+              </div>
             </td>
           </tr>
         </tfoot>
       </table>
     </section>
 
-    <!-- ── Named consequences ───────────────────────────────── -->
+    <!-- ── Consequences + add-consequence ──────────────────────── -->
     <section class="section" id="consequencesSection" hidden>
       <h2>Consequences</h2>
-      <div id="consequencesContainer">
-        <p class="muted">Loading...</p>
-      </div>
-      <button id="btnShowConsequenceSpace">Show consequence space</button>
-    </section>
-
-    <!-- ── Add consequence form ─────────────────────────────── -->
-    <section class="section" id="addConsequenceSection" hidden>
-      <h2>Add consequence</h2>
-      <div class="add-form">
-        <div class="form-row">
-          <label>Short name</label>
-          <input id="inputShortName" type="text" placeholder="e.g. C1">
-        </div>
-        <!-- Aspect rows injected here by JS -->
-        <div id="aspectFormRows"></div>
-        <div class="form-row">
-          <button id="btnAddConsequence" class="primary">Add consequence (POST)</button>
-          <button id="btnClearForm">Clear form</button>
-        </div>
-        <p id="newLevelsNotice" class="new-levels-notice" hidden></p>
-      </div>
+      <table class="data-table" id="consequencesTable">
+        <thead>
+          <tr id="consequencesHeaders">
+            <!-- Populated by JS: Short name + one th per aspect -->
+          </tr>
+        </thead>
+        <tbody id="consequencesBody">
+          <tr><td class="muted">Loading...</td></tr>
+        </tbody>
+        <tfoot class="add-consequence-foot">
+          <tr class="add-consequence-inputs">
+            <!-- Populated by JS: short-name input + one hybrid-input per aspect -->
+          </tr>
+          <tr class="add-consequence-action">
+            <td id="addConsequenceActionCell" colspan="1">
+              <div class="consequence-action-row">
+                <button id="btnShowConsequenceSpace">Show consequence space</button>
+                <span class="action-spacer"></span>
+                <button id="btnAddConsequence" class="primary">Add consequence</button>
+                <button id="btnClearForm">Clear</button>
+              </div>
+            </td>
+          </tr>
+          <tr class="add-consequence-notice" hidden>
+            <td id="addConsequenceNoticeCell" colspan="1">
+              <p id="newLevelsNotice" class="new-levels-notice"></p>
+            </td>
+          </tr>
+        </tfoot>
+      </table>
     </section>
 
     <!-- ── Consequence space dialog ─────────────────────────── -->
@@ -219,25 +231,12 @@
         });
       }
 
-      // Show/hide consequence sections based on whether aspects exist
+      // Show/hide consequence section based on whether aspects exist
       const hasAspects = aspectData.length > 0;
-      document.getElementById("consequencesSection").hidden    = !hasAspects;
-      document.getElementById("addConsequenceSection").hidden  = !hasAspects;
+      document.getElementById("consequencesSection").hidden = !hasAspects;
 
-      // Rebuild add-consequence form rows
-      const formRowsEl = document.getElementById("aspectFormRows");
-      if (formRowsEl) {
-        formRowsEl.innerHTML = "";
-        aspectData.forEach(({ name, levels }) => {
-          const formRow = document.createElement("div");
-          formRow.className = "form-row";
-          const label = document.createElement("label");
-          label.textContent = name;
-          formRow.appendChild(label);
-          formRow.appendChild(buildHybridInput(name, levels));
-          formRowsEl.appendChild(formRow);
-        });
-      }
+      // Rebuild consequences table header and add-row
+      rebuildConsequenceTableStructure();
     }
 
     // ── Add aspect ─────────────────────────────────────────────
@@ -268,6 +267,15 @@
           try { const j = await res.json(); msg = j.error || msg; } catch {}
           alert(msg);
         }
+      });
+    }
+
+    const btnClearAspectForm = document.getElementById("btnClearAspectForm");
+    if (btnClearAspectForm) {
+      btnClearAspectForm.addEventListener("click", () => {
+        document.getElementById("inputAspectName").value = "";
+        document.getElementById("inputAspectType").value = "str";
+        document.getElementById("inputAspectDesc").value = "";
       });
     }
 
@@ -314,33 +322,63 @@
       return container;
     }
 
-    // ── Load consequences and render table ─────────────────────
-    async function loadConsequences() {
-      const container = document.getElementById("consequencesContainer");
-      if (!container) return;
+    // ── Build / rebuild the consequences table thead + tfoot ───
+    function rebuildConsequenceTableStructure() {
+      const colCount = 1 + aspectData.length;  // Short name + one per aspect
 
-      const res = await fetch("/api/consequences");
-      if (!res.ok) { container.innerHTML = "<p class='error'>Failed to load consequences.</p>"; return; }
-      const data = await res.json();
-
-      if (!data.rows || data.rows.length === 0) {
-        container.innerHTML = "<p class='muted'>No consequences defined yet.</p>";
-        return;
-      }
-
-      const table = document.createElement("table");
-      table.className = "data-table";
-      table.id = "consequencesTable";
-
-      const thead = table.createTHead();
-      const hRow  = thead.insertRow();
+      // thead
+      const headersRow = document.getElementById("consequencesHeaders");
+      headersRow.innerHTML = "";
       ["Short name", ...aspectData.map(a => a.name)].forEach(h => {
         const th = document.createElement("th");
         th.textContent = h;
-        hRow.appendChild(th);
+        headersRow.appendChild(th);
       });
 
-      const tbody = table.createTBody();
+      // tfoot inputs row
+      const inputsRow = document.querySelector(".add-consequence-inputs");
+      inputsRow.innerHTML = "";
+
+      // Short name cell
+      const shortTd = document.createElement("td");
+      const shortInput = document.createElement("input");
+      shortInput.type = "text";
+      shortInput.id = "inputShortName";
+      shortInput.placeholder = "e.g. C1";
+      shortTd.appendChild(shortInput);
+      inputsRow.appendChild(shortTd);
+
+      // One hybrid-input cell per aspect
+      aspectData.forEach(({ name, levels }) => {
+        const td = document.createElement("td");
+        td.appendChild(buildHybridInput(name, levels));
+        inputsRow.appendChild(td);
+      });
+
+      // Update colspan on action and notice rows
+      document.getElementById("addConsequenceActionCell").colSpan = colCount;
+      document.getElementById("addConsequenceNoticeCell").colSpan = colCount;
+    }
+
+    // ── Load consequences and populate tbody ───────────────────
+    async function loadConsequences() {
+      const tbody = document.getElementById("consequencesBody");
+      if (!tbody) return;
+
+      const res = await fetch("/api/consequences");
+      if (!res.ok) {
+        tbody.innerHTML = "<tr><td class='error'>Failed to load consequences.</td></tr>";
+        return;
+      }
+      const data = await res.json();
+
+      if (!data.rows || data.rows.length === 0) {
+        const colCount = 1 + aspectData.length;
+        tbody.innerHTML = `<tr><td colspan="${colCount}" class="muted">No consequences defined yet.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = "";
       data.rows.forEach(row => {
         const tr = tbody.insertRow();
         row.forEach((cell, i) => {
@@ -349,9 +387,6 @@
           else { td.textContent = cell; }
         });
       });
-
-      container.innerHTML = "";
-      container.appendChild(table);
     }
 
     // ── Helper: get level value from a hybrid input ────────────
@@ -390,12 +425,13 @@
         if (res.ok) {
           const json = await res.json();
           const newLevels = json.new_levels || [];
+          const noticeRow = document.querySelector(".add-consequence-notice");
           const notice = document.getElementById("newLevelsNotice");
           if (newLevels.length > 0) {
             notice.textContent = "New levels added: " + newLevels.join(", ");
-            notice.hidden = false;
+            noticeRow.hidden = false;
           } else {
-            notice.hidden = true;
+            noticeRow.hidden = true;
           }
           document.getElementById("inputShortName").value = "";
           await loadAspects();
@@ -412,13 +448,13 @@
     if (btnClearForm) {
       btnClearForm.addEventListener("click", () => {
         document.getElementById("inputShortName").value = "";
-        document.querySelectorAll(".hybrid-input").forEach(container => {
+        document.querySelectorAll(".add-consequence-inputs .hybrid-input").forEach(container => {
           container.querySelector(".level-select").value = "";
           const ti = container.querySelector(".level-text");
           ti.value = ""; ti.hidden = true;
         });
-        const notice = document.getElementById("newLevelsNotice");
-        if (notice) notice.hidden = true;
+        const noticeRow = document.querySelector(".add-consequence-notice");
+        if (noticeRow) noticeRow.hidden = true;
       });
     }
 
@@ -429,9 +465,9 @@
 
     function getNamedLevelTuples() {
       const named = new Set();
-      const table = document.getElementById("consequencesTable");
-      if (!table) return named;
-      table.querySelectorAll("tbody tr").forEach(tr => {
+      const tbody = document.getElementById("consequencesBody");
+      if (!tbody) return named;
+      tbody.querySelectorAll("tr").forEach(tr => {
         const cells = Array.from(tr.querySelectorAll("td")).slice(1);
         named.add(JSON.stringify(cells.map(td => td.textContent.trim())));
       });
