@@ -215,7 +215,7 @@ dialog::backdrop {
 }
 
 /* Named consequence rows highlighted in light green */
-#consequenceSpaceTable tbody tr.named-consequence {
+#consequenceSpaceTable tbody tr.named-consequence td {
   background: #d4edda;
 }
 
@@ -223,11 +223,11 @@ dialog::backdrop {
   cursor: pointer;
 }
 
-#consequenceSpaceTable tbody tr:hover {
+#consequenceSpaceTable tbody tr:hover td {
   background: #cce5ff;
 }
 
-#consequenceSpaceTable tbody tr.named-consequence:hover {
+#consequenceSpaceTable tbody tr.named-consequence:hover td {
   background: #b8dfc4;
 }
 

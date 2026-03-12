@@ -118,8 +118,8 @@
         <button id="btnCloseDialog" class="secondary">Close</button>
       </div>
       <p class="hint">
-        Highlighted rows (<span class="named-marker">green</span>) are already
-        named consequences. Click any row to pre-fill the add-consequence form.
+        Highlighted rows already have a name in the named consequences set.
+        Click any row to pre-fill the add-consequence form.
       </p>
       <div class="dialog-table-wrapper">
         <table class="data-table" id="consequenceSpaceTable">
@@ -385,12 +385,14 @@
 
       tbody.innerHTML = "";
       data.rows.forEach(row => {
-        const tr = tbody.insertRow();
+        const tr = document.createElement("tr");
         row.forEach((cell, i) => {
-          const td = tr.insertCell();
+          const td = document.createElement("td");
           if (i === 0) { const b = document.createElement("strong"); b.textContent = cell; td.appendChild(b); }
           else { td.textContent = cell; }
+          tr.appendChild(td);
         });
+        tbody.appendChild(tr);
       });
     }
 
@@ -469,12 +471,15 @@
     const btnClose = document.getElementById("btnCloseDialog");
 
     function getNamedLevelTuples() {
-      const named = new Set();
+      const named = new Map();
       const tbody = document.getElementById("consequencesBody");
       if (!tbody) return named;
       tbody.querySelectorAll("tr").forEach(tr => {
-        const cells = Array.from(tr.querySelectorAll("td")).slice(1);
-        named.add(JSON.stringify(cells.map(td => td.textContent.trim())));
+        const cells = Array.from(tr.querySelectorAll("td"));
+        if (cells.length < 2) return;
+        const shortName = cells[0].textContent.trim();
+        const key = JSON.stringify(cells.slice(1).map(td => td.textContent.trim()));
+        named.set(key, shortName);
       });
       return named;
     }
@@ -486,6 +491,10 @@
 
       const headersRow = document.getElementById("consequenceSpaceHeaders");
       headersRow.innerHTML = "";
+      // Prepend a "Name" column header
+      const nameTh = document.createElement("th");
+      nameTh.textContent = "Name";
+      headersRow.appendChild(nameTh);
       data.headers.forEach(h => {
         const th = document.createElement("th");
         th.textContent = h;
@@ -494,11 +503,18 @@
 
       const tbody = document.getElementById("consequenceSpaceBody");
       tbody.innerHTML = "";
-      const namedSets = getNamedLevelTuples();
+      const namedMap = getNamedLevelTuples();
 
       data.rows.forEach(row => {
         const tr = document.createElement("tr");
-        if (namedSets.has(JSON.stringify(row))) tr.classList.add("named-consequence");
+        const key = JSON.stringify(row);
+        const shortName = namedMap.get(key) ?? "";
+        if (shortName) tr.classList.add("named-consequence");
+
+        // Short-name cell
+        const nameTd = document.createElement("td");
+        nameTd.textContent = shortName;
+        tr.appendChild(nameTd);
 
         row.forEach(cell => {
           const td = document.createElement("td");
