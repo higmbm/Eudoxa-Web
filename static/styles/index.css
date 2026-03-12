@@ -180,6 +180,13 @@ button.secondary:hover {
   background: #ebebeb;
 }
 
+/* ── Confirm dialog ────────────────────────────────────────── */
+.confirm-dialog-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
 /* ── Consequence space dialog ──────────────────────────────── */
 dialog {
   border: 1px solid #ccc;

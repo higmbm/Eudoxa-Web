@@ -111,6 +111,18 @@
       </table>
     </section>
 
+    <!-- ── Delete confirmation dialog ──────────────────────────── -->
+    <dialog id="deleteConfirmDialog">
+      <div class="dialog-header">
+        <h2>Delete project?</h2>
+      </div>
+      <p>This will permanently delete the current project and all its data.</p>
+      <div class="confirm-dialog-actions">
+        <button id="btnConfirmDelete" class="danger">Yes, delete</button>
+        <button id="btnCancelDelete" class="secondary">Cancel</button>
+      </div>
+    </dialog>
+
     <!-- ── Consequence space dialog ─────────────────────────── -->
     <dialog id="consequenceSpaceDialog">
       <div class="dialog-header">
@@ -178,12 +190,22 @@
       });
     }
 
-    const btnDelete = document.getElementById("btnDelete");
+    const btnDelete        = document.getElementById("btnDelete");
+    const deleteConfirmDlg = document.getElementById("deleteConfirmDialog");
+    const btnConfirmDelete = document.getElementById("btnConfirmDelete");
+    const btnCancelDelete  = document.getElementById("btnCancelDelete");
+
     if (btnDelete) {
-      btnDelete.addEventListener("click", async () => {
+      btnDelete.addEventListener("click", () => deleteConfirmDlg.showModal());
+    }
+    if (btnCancelDelete) {
+      btnCancelDelete.addEventListener("click", () => deleteConfirmDlg.close());
+    }
+    if (btnConfirmDelete) {
+      btnConfirmDelete.addEventListener("click", async () => {
         const res = await fetch("/api/project", { method: "DELETE" });
         if (res.status === 204) { location.reload(); }
-        else { alert("Error deleting project."); }
+        else { deleteConfirmDlg.close(); alert("Error deleting project."); }
       });
     }
 
