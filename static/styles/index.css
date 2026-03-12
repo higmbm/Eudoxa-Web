@@ -44,15 +44,19 @@
   margin: 0;
 }
 
-.section-header {
-  display: flex;
-  align-items: baseline;
-  gap: 1rem;
-  margin-bottom: 0.75rem;
+/* A plain <a> styled to look like a button, used in section headers */
+.header-link-button {
+  padding: 0.45rem 0.8rem;
+  font-size: 1rem;
+  border: 1px solid #999;
+  border-radius: 6px;
+  background: #f6f6f6;
+  color: #1a1a1a;
+  text-decoration: none;
 }
 
-.section-header h2 {
-  margin: 0;
+.header-link-button:hover {
+  background: #ebebeb;
 }
 
 /* ── Add-aspect tfoot row ───────────────────────────────────── */
