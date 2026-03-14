@@ -59,16 +59,6 @@
   background: #ebebeb;
 }
 
-/* ── Aspect name link in aspects table ──────────────────────── */
-.aspect-name-link {
-  text-decoration: none;
-  color: inherit;
-}
-
-.aspect-name-link:hover {
-  text-decoration: underline;
-}
-
 /* ── Add-aspect tfoot row ───────────────────────────────────── */
 .add-aspect-foot tr.add-aspect-inputs td {
   background: #f0f4ff;

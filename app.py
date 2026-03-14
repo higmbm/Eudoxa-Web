@@ -275,8 +275,21 @@ def list_levels(aspect_name):
         "rows": rows
     }, 200
     
-@app.post("/api/aspects/<aspect_name>/levels")
-def add_level(aspect_name):
+@app.patch("/api/aspects/<aspect_name>/levels/<level_name>")
+def patch_level(aspect_name, level_name):
+    mgr = load_manager_or_400()
+
+    data = request.get_json(silent=True) or {}
+    if "description" in data:
+        try:
+            mgr.set_level_description(aspect_name, level_name, data["description"] or None)
+        except ValueError as e:
+            return {"error": str(e)}, 404
+
+    save_manager(mgr)
+    return {"message": "Level updated"}, 200
+
+
     mgr = load_manager_or_400()
     data = request.get_json()
 

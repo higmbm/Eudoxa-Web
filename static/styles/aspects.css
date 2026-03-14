@@ -9,15 +9,6 @@
   text-align: right;
 }
 
-.aspects-table td.num-cell a {
-  text-decoration: none;
-  color: inherit;
-}
-
-.aspects-table td.num-cell a:hover {
-  text-decoration: underline;
-}
-
 /* ── Add-aspect tfoot ──────────────────────────────────────── */
 .add-aspect-foot tr.add-aspect-inputs td {
   background: #f0f4ff;

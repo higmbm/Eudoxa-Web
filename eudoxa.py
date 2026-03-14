@@ -68,6 +68,11 @@ class Aspect:
     def add_description(self, description: str):
         self.description = description
 
+    def set_level_description(self, level: str, description: str):
+        if level not in self.levels:
+            raise ValueError(f"Level '{level}' does not exist in aspect '{self.name}'.")
+        self.levels[level] = description
+
     def __repr__(self):
         return (f"Aspect(name='{self.name}', data_type='{self.data_type.__name__}', "
                 f"description='{self.description}', levels={list(self.levels.keys())})")
@@ -494,6 +499,12 @@ class EudoxaManager:
             ws.cell(row=row_index, column=4).value='Consequence'
             ws.cell(row=row_index, column=5).value=c2
             row_index += 1
+
+    def set_level_description(self, aspect_name: str, level_name: str, description: str):
+        logger.debug(f"Setting description for level '{level_name}' in aspect '{aspect_name}'.")
+        if aspect_name not in self.aspects:
+            raise ValueError(f"Aspect '{aspect_name}' does not exist.")
+        self.aspects[aspect_name].set_level_description(level_name, description)
 
     def add_aspect_level(self, aspect_name: str, level, description: str):
         logger.debug(f"Adding level '{level}' to aspect '{aspect_name}'.")

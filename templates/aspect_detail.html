@@ -36,7 +36,9 @@
         {% for row in level_rows %}
         <tr>
           <td>{{ row.level }}</td>
-          <td>{{ row.description }}</td>
+          <td class="editable-desc"
+              data-level="{{ row.level }}"
+              title="Click to edit description">{{ row.description }}</td>
         </tr>
         {% endfor %}
       {% else %}
@@ -66,10 +68,19 @@
     const ASPECT_NAME = document.getElementById("addLevelError").dataset.aspect;
 
     // ── Inline description editing ───────────────────────────────
-    const descTd = document.querySelector("dd.editable-desc");
-    if (descTd) attachDescEdit(descTd, descTd.dataset.aspect);
+    const descDd = document.querySelector("dd.editable-desc");
+    if (descDd) {
+      const url = `/api/aspects/${encodeURIComponent(ASPECT_NAME)}`;
+      attachDescEdit(descDd, url);
+    }
 
-    function attachDescEdit(td, aspectName) {
+    document.querySelectorAll("#levelsBody td.editable-desc").forEach(td => {
+      const level = td.dataset.level;
+      const url = `/api/aspects/${encodeURIComponent(ASPECT_NAME)}/levels/${encodeURIComponent(level)}`;
+      attachDescEdit(td, url);
+    });
+
+    function attachDescEdit(td, url) {
       td.addEventListener("click", handler);
       function handler() {
         if (td.querySelector("input")) return;
@@ -91,14 +102,14 @@
 
         async function commit() {
           const newDesc = input.value.trim();
-          const res = await fetch(`/api/aspects/${encodeURIComponent(aspectName)}`, {
+          const res = await fetch(url, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ description: newDesc || null })
           });
           if (res.ok) {
             td.textContent = newDesc;
-            attachDescEdit(td, aspectName);
+            attachDescEdit(td, url);
           } else {
             let msg = `${res.status} ${res.statusText}`;
             try { const j = await res.json(); msg = j.error || msg; } catch {}
@@ -109,7 +120,7 @@
         function cancel(e) {
           if (e) e.stopPropagation();
           td.textContent = original;
-          attachDescEdit(td, aspectName);
+          attachDescEdit(td, url);
         }
 
         setBtn.addEventListener("click", commit);
@@ -160,12 +171,20 @@
         if (placeholder) placeholder.closest("tr").remove();
 
         const tr = document.createElement("tr");
-        [level, description || ""].forEach(val => {
-          const td = document.createElement("td");
-          td.textContent = val;
-          tr.appendChild(td);
-        });
+
+        const levelTd = document.createElement("td");
+        levelTd.textContent = level;
+        tr.appendChild(levelTd);
+
+        const descTd = document.createElement("td");
+        descTd.textContent = description || "";
+        descTd.className = "editable-desc";
+        descTd.dataset.level = level;
+        descTd.title = "Click to edit description";
+        const levelUrl = `/api/aspects/${encodeURIComponent(ASPECT_NAME)}/levels/${encodeURIComponent(level)}`;
+        tr.appendChild(descTd);
         tbody.appendChild(tr);
+        attachDescEdit(descTd, levelUrl);
         clearLevelForm();
         document.getElementById("inputLevel").focus();
       } else {

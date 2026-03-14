@@ -85,6 +85,16 @@ select {
   margin-bottom: 1rem;
 }
 
+/* --- Links in data tables --------------------------------- */
+.data-table a {
+  color: #0066cc;
+  text-decoration: none;
+}
+
+.data-table a:hover {
+  text-decoration: underline;
+}
+
 /* --- Back link -------------------------------------------- */
 .back-link {
   margin-top: 1rem;
