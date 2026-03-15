@@ -79,3 +79,72 @@ button.primary {
 button.primary:hover {
   background: #0048d4;
 }
+/* ── Level relations matrix ─────────────────────────────────── */
+.relations-wrapper {
+  max-width: 100%;
+  overflow-x: auto;
+  margin-bottom: 2rem;
+}
+
+.relations-table {
+  border-collapse: collapse;
+  white-space: nowrap;
+}
+
+.relations-table th,
+.relations-table td {
+  border: 1px solid #ccc;
+  padding: 6px 10px;
+  text-align: center;
+  min-width: 2.5rem;
+}
+
+.relations-table thead th {
+  background: #f0f0f0;
+}
+
+/* Row header (level name on left) */
+.rel-row-header {
+  background: #f0f0f0;
+  text-align: left;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.rel-row-header:hover {
+  background: #dce8ff;
+}
+
+/* Column header */
+.rel-col-header {
+  cursor: pointer;
+}
+
+.rel-col-header:hover {
+  background: #dce8ff;
+}
+
+/* Diagonal cells — immutable */
+.rel-diag {
+  background: #e8e8e8;
+  color: #aaa;
+}
+
+/* Editable cells */
+.rel-editable {
+  cursor: pointer;
+}
+
+.rel-editable:hover {
+  background: #f0f4ff;
+}
+
+/* Dropdown inside a cell */
+.rel-select {
+  font-size: 1rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  width: 100%;
+}

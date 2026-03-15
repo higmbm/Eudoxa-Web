@@ -3,6 +3,7 @@ import os
 import openpyxl
 from flask import Flask, session, request, jsonify, abort
 from flask import render_template
+import eudoxa
 from eudoxa import EudoxaManager
 
 app = Flask(__name__)
@@ -132,7 +133,7 @@ def import_project():
     aspect_sheets = [name for name in wb.sheetnames if name.startswith(prefix)]
 
     if not aspect_sheets:
-        return {"error": "No aspect worksheets ('|ASP| …') found in the file."}, 400
+        return {"error": "No aspect worksheets found in the file."}, 400
 
     imported = []
     try:
@@ -317,8 +318,63 @@ def list_levels(aspect_name):
         "headers": ["Level", "Description"],
         "rows": rows
     }, 200
-    
-@app.patch("/api/aspects/<aspect_name>/levels/<level_name>")
+
+@app.post("/api/aspects/<aspect_name>/levels")
+def add_level(aspect_name):
+    mgr = load_manager_or_400()
+    data = request.get_json()
+
+    level = data["level"]
+    description = data.get("description")
+
+    try:
+        mgr.add_aspect_level(aspect_name, level, description)
+    except Exception as e:
+        return {"error": str(e)}, 400
+
+    save_manager(mgr)
+    return {"message": "Level added"}, 201
+
+@app.get("/api/aspects/<aspect_name>/relations")
+def get_relations(aspect_name):
+    mgr = load_manager_or_400()
+    aspect = mgr.aspects.get(aspect_name)
+    if not aspect:
+        return {"error": f"Aspect '{aspect_name}' not found"}, 404
+
+    levels = list(aspect.levels.keys())
+    options = eudoxa.AL_RELATION_OPTIONS
+
+    cells = {}
+    for la in levels:
+        for lb in levels:
+            rel = mgr.get_aspect_level_relation(aspect_name, la, lb)
+            cells[f"{la}|||{lb}"] = rel if rel is not NotImplemented else eudoxa.UNDEFINED
+
+    return {"levels": levels, "options": options, "cells": cells}, 200
+
+
+@app.patch("/api/aspects/<aspect_name>/relations/<la>/<lb>")
+def patch_relation(aspect_name, la, lb):
+    mgr = load_manager_or_400()
+    aspect = mgr.aspects.get(aspect_name)
+    if not aspect:
+        return {"error": f"Aspect '{aspect_name}' not found"}, 404
+
+    data = request.get_json(silent=True) or {}
+    rel = data.get("relation", eudoxa.UNDEFINED)
+    if rel not in eudoxa.AL_RELATION_OPTIONS:
+        return {"error": f"Invalid relation '{rel}'"}, 400
+
+    try:
+        adds, colls = mgr.set_aspect_level_relation(aspect_name, la, lb, rel)
+    except ValueError as e:
+        return {"error": str(e)}, 404
+
+    save_manager(mgr)
+    return {"message": "Relation updated", "adds": len(adds), "collisions": len(colls)}, 200
+
+
 def patch_level(aspect_name, level_name):
     mgr = load_manager_or_400()
 
