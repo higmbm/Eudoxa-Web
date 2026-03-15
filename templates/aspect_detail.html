@@ -193,6 +193,7 @@
         attachDescEdit(descTd, levelUrl);
         clearLevelForm();
         document.getElementById("inputLevel").focus();
+        loadRelations();
       } else {
         let msg = `${res.status} ${res.statusText}`;
         try { const j = await res.json(); msg = j.error || msg; } catch {}
