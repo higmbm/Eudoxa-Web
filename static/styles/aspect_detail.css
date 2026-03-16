@@ -148,3 +148,43 @@ button.primary:hover {
   padding: 0;
   width: 100%;
 }
+
+/* ── Inference panel ────────────────────────────────────────── */
+.inference-panel {
+  max-width: 600px;
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.inference-adds,
+.inference-colls {
+  padding: 0.55rem 0.9rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.inference-adds {
+  background: #d4edda;
+  border: 1px solid #7cb97c;
+  color: #1a4d2a;
+}
+
+.inference-colls {
+  background: #fde8e8;
+  border: 1px solid #e07070;
+  color: #7a1a1a;
+}
+
+.inference-adds ul,
+.inference-colls ul {
+  margin: 0.3rem 0 0 0;
+  padding-left: 1.4rem;
+}
+
+.inference-adds li,
+.inference-colls li {
+  font-family: monospace;
+  font-size: 0.85rem;
+}

@@ -69,6 +69,10 @@
   <div id="relationsWrapper" class="relations-wrapper">
     <p class="muted" id="relationsPlaceholder">Loading...</p>
   </div>
+  <div id="inferencePanel" class="inference-panel" hidden>
+    <div id="inferenceAdds"  class="inference-adds"  hidden></div>
+    <div id="inferenceColls" class="inference-colls" hidden></div>
+  </div>
 
   <script>
     const ASPECT_NAME = document.getElementById("addLevelError").dataset.aspect;
@@ -327,7 +331,9 @@
           }
         );
         if (res.ok) {
+          const json = await res.json();
           relCells[`${la}|||${lb}`] = newRel;
+          showInferencePanel(la, newRel, lb, json.adds || [], json.colls || []);
           // Reload full matrix to reflect any inferred relations
           await loadRelations();
         } else {
@@ -370,6 +376,36 @@
         const sel = makeCellDropdown(td);
         activeDropdowns.push(sel);
       });
+    }
+
+    // ── Inference panel ──────────────────────────────────────────
+    function showInferencePanel(la, rel, lb, adds, colls) {
+      const panel    = document.getElementById("inferencePanel");
+      const addsDiv  = document.getElementById("inferenceAdds");
+      const collsDiv = document.getElementById("inferenceColls");
+
+      clearTimeout(panel._hideTimer);
+
+      const relLabel = rel === "" ? "\u2014" : rel;
+      if (colls.length > 0) {
+        collsDiv.innerHTML = `<strong>Aspect level relation not set (collision):</strong> ${la} ${relLabel} ${lb}`;
+        collsDiv.innerHTML += "<br><strong>Collisions:</strong><ul>"
+          + colls.map(s => `<li>${s}</li>`).join("") + "</ul>";
+        collsDiv.hidden = false;
+        addsDiv.hidden = true;
+      } else {
+        addsDiv.innerHTML = `<strong>Aspect level relation set:</strong> ${la} ${relLabel} ${lb}`;
+        if (adds.length > 0) {
+          addsDiv.innerHTML += "<br><strong>Inferred additions:</strong><ul>"
+            + adds.map(s => `<li>${s}</li>`).join("") + "</ul>";
+        }
+        addsDiv.hidden = false;
+        collsDiv.hidden = true;
+      }
+
+      panel.hidden = false;
+
+      panel._hideTimer = setTimeout(() => { panel.hidden = true; }, 8000);
     }
 
     // Dismiss when clicking outside the matrix

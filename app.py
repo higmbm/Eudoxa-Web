@@ -372,7 +372,22 @@ def patch_relation(aspect_name, la, lb):
         return {"error": str(e)}, 404
 
     save_manager(mgr)
-    return {"message": "Relation updated", "adds": len(adds), "collisions": len(colls)}, 200
+
+    def fmt_add(entry):
+        origin_type, origin_detail, add = entry
+        vd1, new_rel, vd2 = add
+        return f"{repr(vd1)} {new_rel} {repr(vd2)}"
+
+    def fmt_coll(entry):
+        origin_type, origin_detail, coll = entry
+        vd1, old_rel, vd2, new_rel = coll
+        return f"{repr(vd1)} {new_rel} {repr(vd2)} collides with {repr(vd1)} {old_rel} {repr(vd2)}"
+
+    return {
+        "message": "Relation updated",
+        "adds":  [fmt_add(e)  for e in adds],
+        "colls": [fmt_coll(e) for e in colls]
+    }, 200
 
 
 def patch_level(aspect_name, level_name):
