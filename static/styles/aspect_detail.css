@@ -103,6 +103,15 @@ button.primary:hover {
   background: #f0f0f0;
 }
 
+/* Corner cell — edit whole matrix */
+.rel-corner {
+  cursor: pointer;
+}
+
+.rel-corner:hover {
+  background: #dce8ff;
+}
+
 /* Row header (level name on left) */
 .rel-row-header {
   background: #f0f0f0;
@@ -126,8 +135,9 @@ button.primary:hover {
 
 /* Diagonal cells — immutable */
 .rel-diag {
-  background: #e8e8e8;
-  color: #aaa;
+  background: #d8d8d8 !important;
+  color: #888;
+  cursor: default;
 }
 
 /* Editable cells */

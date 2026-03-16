@@ -206,19 +206,40 @@
       }
     });
     // ── Level relations matrix ───────────────────────────────────
-    let relLevels  = [];
-    let relOptions = [];
-    let relCells   = {};
-    let activeDropdowns = [];   // currently visible <select> elements
+    let relLevels        = [];
+    let relDescriptions  = {};
+    let relOptions       = [];
+    let relCells         = {};
+    let activeDropdowns  = [];   // currently visible <select> elements
 
     async function loadRelations() {
       const res = await fetch(`/api/aspects/${encodeURIComponent(ASPECT_NAME)}/relations`);
       if (!res.ok) return;
       const data = await res.json();
-      relLevels  = data.levels;
-      relOptions = data.options;
-      relCells   = data.cells;
+      relLevels        = data.levels;
+      relDescriptions  = data.descriptions || {};
+      relOptions       = data.options;
+      relCells         = data.cells;
       renderRelationsMatrix();
+    }
+
+    function levelLabel(level) {
+      const desc = relDescriptions[level];
+      return desc ? `${level}: ${desc}` : level;
+    }
+
+    function headerTooltip(axis, level) {
+      const label = levelLabel(level);
+      const action = axis === "row"
+        ? "Click to edit the whole row. Click again to dismiss."
+        : "Click to edit the whole column. Click again to dismiss.";
+      return `${label} | ${action}`;
+    }
+
+    function cellTooltip(la, lb) {
+      const rel = relCells[`${la}|||${lb}`] || "";
+      const relPart = rel === "" ? "?" : rel;
+      return `${la} ${relPart} ${lb} | Click to edit relation. Click again to dismiss.`;
     }
 
     function renderRelationsMatrix() {
@@ -233,26 +254,24 @@
         return;
       }
 
-      const TOOLTIP =
-        "Click a cell to edit a relation. " +
-        "Click a row or column header to edit the whole row or column. " +
-        "Click again to dismiss.";
-
       const table = document.createElement("table");
       table.className = "data-table relations-table";
       table.id = "relationsTable";
-      table.title = TOOLTIP;
 
       // Header row
       const thead = document.createElement("thead");
       const headerRow = document.createElement("tr");
       const cornerTh = document.createElement("th");
+      cornerTh.className = "rel-corner";
+      cornerTh.title = "Click to edit the whole matrix. Click again to dismiss.";
+      cornerTh.addEventListener("click", e => { e.stopPropagation(); onCornerClick(); });
       headerRow.appendChild(cornerTh);
       relLevels.forEach(lb => {
         const th = document.createElement("th");
         th.textContent = lb;
         th.className = "rel-col-header";
         th.dataset.col = lb;
+        th.title = headerTooltip("col", lb);
         th.addEventListener("click", e => { e.stopPropagation(); onHeaderClick("col", lb); });
         headerRow.appendChild(th);
       });
@@ -267,6 +286,7 @@
         rowTh.textContent = la;
         rowTh.className = "rel-row-header";
         rowTh.dataset.row = la;
+        rowTh.title = headerTooltip("row", la);
         rowTh.addEventListener("click", e => { e.stopPropagation(); onHeaderClick("row", la); });
         tr.appendChild(rowTh);
 
@@ -281,6 +301,7 @@
           } else {
             td.className = "rel-cell rel-editable";
             td.textContent = relCells[`${la}|||${lb}`] || "";
+            td.title = cellTooltip(la, lb);
             td.addEventListener("click", e => { e.stopPropagation(); onCellClick(td); });
           }
           tr.appendChild(td);
@@ -347,6 +368,19 @@
 
       td.appendChild(sel);
       return sel;
+    }
+
+    function onCornerClick() {
+      const table = document.getElementById("relationsTable");
+      if (!table) return;
+      const cells = Array.from(table.querySelectorAll("td.rel-editable"));
+      const alreadyActive = cells.some(td => td.querySelector("select"));
+      dismissAll();
+      if (alreadyActive) return;
+      cells.forEach(td => {
+        const sel = makeCellDropdown(td);
+        activeDropdowns.push(sel);
+      });
     }
 
     function onCellClick(td) {

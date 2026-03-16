@@ -343,6 +343,7 @@ def get_relations(aspect_name):
         return {"error": f"Aspect '{aspect_name}' not found"}, 404
 
     levels = list(aspect.levels.keys())
+    descriptions = {name: desc for name, desc in aspect.levels.items()}
     options = eudoxa.AL_RELATION_OPTIONS
 
     cells = {}
@@ -351,7 +352,7 @@ def get_relations(aspect_name):
             rel = mgr.get_aspect_level_relation(aspect_name, la, lb)
             cells[f"{la}|||{lb}"] = rel if rel is not NotImplemented else eudoxa.UNDEFINED
 
-    return {"levels": levels, "options": options, "cells": cells}, 200
+    return {"levels": levels, "descriptions": descriptions, "options": options, "cells": cells}, 200
 
 
 @app.patch("/api/aspects/<aspect_name>/relations/<la>/<lb>")
@@ -390,6 +391,7 @@ def patch_relation(aspect_name, la, lb):
     }, 200
 
 
+@app.patch("/api/aspects/<aspect_name>/levels/<level_name>")
 def patch_level(aspect_name, level_name):
     mgr = load_manager_or_400()
 
@@ -402,21 +404,6 @@ def patch_level(aspect_name, level_name):
 
     save_manager(mgr)
     return {"message": "Level updated"}, 200
-
-
-    mgr = load_manager_or_400()
-    data = request.get_json()
-
-    level = data["level"]
-    description = data.get("description")
-
-    try:
-        mgr.add_aspect_level(aspect_name, level, description)
-    except Exception as e:
-        return {"error": str(e)}, 400
-
-    save_manager(mgr)
-    return {"message": "Level added"}, 201
 
 # -----------------------------------------------------------
 #  REST: CONSEQUENCES
