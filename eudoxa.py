@@ -538,7 +538,12 @@ class EudoxaManager:
         vd_ba = VDiff(aspect, lb_str, la_str)
 
         origin = ['SETAL', [aspect, la_str, rel, lb_str]]
-        if rel == BT:
+        if rel == UNDEFINED:
+            app_ac(origin, self.set_vdiff_relation(vd_ab, zero, UNDEFINED), adds, colls)
+            app_ac(origin, self.set_vdiff_relation(vd_ba, zero, UNDEFINED), adds, colls)
+            app_ac(origin, self.set_vdiff_relation(zero, vd_ab, UNDEFINED), adds, colls)
+            app_ac(origin, self.set_vdiff_relation(zero, vd_ba, UNDEFINED), adds, colls)
+        elif rel == BT:
             app_ac(origin, self.set_vdiff_relation(vd_ab, zero, TRUE), adds, colls)
             app_ac(origin, self.set_vdiff_relation(vd_ba, zero, FALSE), adds, colls)
             app_ac(origin, self.set_vdiff_relation(zero, vd_ab, FALSE), adds, colls)

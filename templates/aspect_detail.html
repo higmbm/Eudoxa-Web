@@ -428,7 +428,10 @@
         collsDiv.hidden = false;
         addsDiv.hidden = true;
       } else {
-        addsDiv.innerHTML = `<strong>Aspect level relation set:</strong> ${la} ${relLabel} ${lb}`;
+        const setLabel = rel === ""
+          ? "<strong>Aspect level relation unset:</strong>"
+          : "<strong>Aspect level relation set:</strong>";
+        addsDiv.innerHTML = `${setLabel} ${la} ${relLabel} ${lb}`;
         if (adds.length > 0) {
           addsDiv.innerHTML += "<br><strong>Inferred additions:</strong><ul>"
             + adds.map(s => `<li>${s}</li>`).join("") + "</ul>";

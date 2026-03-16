@@ -376,8 +376,13 @@ def patch_relation(aspect_name, la, lb):
 
     def fmt_add(entry):
         origin_type, origin_detail, add = entry
-        vd1, new_rel, vd2 = add
-        return f"{repr(vd1)} {new_rel} {repr(vd2)}"
+        if len(add) == 3:
+            vd1, new_rel, vd2 = add
+            return f"{repr(vd1)} {new_rel} {repr(vd2)}"
+        else:
+            an1, d1, an2, d2, new_rel = add
+            rel_label = new_rel if new_rel else "\u2014"
+            return f"\u0394{d1} {rel_label} \u0394{d2} (unset)"
 
     def fmt_coll(entry):
         origin_type, origin_detail, coll = entry
