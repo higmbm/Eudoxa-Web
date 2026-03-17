@@ -367,13 +367,6 @@ def patch_relation(aspect_name, la, lb):
     if rel not in eudoxa.AL_RELATION_OPTIONS:
         return {"error": f"Invalid relation '{rel}'"}, 400
 
-    try:
-        adds, colls = mgr.set_aspect_level_relation(aspect_name, la, lb, rel)
-    except ValueError as e:
-        return {"error": str(e)}, 404
-
-    save_manager(mgr)
-
     def fmt_add(entry):
         origin_type, origin_detail, add = entry
         if len(add) == 3:
@@ -389,10 +382,23 @@ def patch_relation(aspect_name, la, lb):
         vd1, old_rel, vd2, new_rel = coll
         return f"{repr(vd1)} {new_rel} {repr(vd2)} collides with {repr(vd1)} {old_rel} {repr(vd2)}"
 
+    try:
+        adds, colls, inferred_adds = mgr.try_set_aspect_level_relation(aspect_name, la, lb, rel)
+    except ValueError as e:
+        return {"error": str(e)}, 404
+
+    if colls:
+        return {
+            "message": "Relation rejected",
+            "colls": [fmt_coll(e) for e in colls]
+        }, 409
+
+    save_manager(mgr)
+
     return {
         "message": "Relation updated",
-        "adds":  [fmt_add(e)  for e in adds],
-        "colls": [fmt_coll(e) for e in colls]
+        "adds":          [fmt_add(e) for e in adds],
+        "inferred_adds": [fmt_add(e) for e in inferred_adds]
     }, 200
 
 

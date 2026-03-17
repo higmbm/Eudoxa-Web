@@ -351,16 +351,14 @@
             body: JSON.stringify({ relation: newRel })
           }
         );
+        const json = await res.json().catch(() => ({}));
         if (res.ok) {
-          const json = await res.json();
           relCells[`${la}|||${lb}`] = newRel;
-          showInferencePanel(la, newRel, lb, json.adds || [], json.colls || []);
+          showInferencePanel(la, newRel, lb, json.adds || [], json.inferred_adds || [], []);
           // Reload full matrix to reflect any inferred relations
           await loadRelations();
         } else {
-          let msg = `${res.status} ${res.statusText}`;
-          try { const j = await res.json(); msg = j.error || msg; } catch {}
-          alert(msg);
+          showInferencePanel(la, newRel, lb, [], [], json.colls || [json.error] || []);
           restoreCell(sel);
         }
         activeDropdowns = activeDropdowns.filter(s => s !== sel);
@@ -413,35 +411,41 @@
     }
 
     // ── Inference panel ──────────────────────────────────────────
-    function showInferencePanel(la, rel, lb, adds, colls) {
+    function showInferencePanel(la, rel, lb, adds, inferredAdds, colls) {
       const panel    = document.getElementById("inferencePanel");
       const addsDiv  = document.getElementById("inferenceAdds");
       const collsDiv = document.getElementById("inferenceColls");
 
       clearTimeout(panel._hideTimer);
+      addsDiv.hidden  = true;
+      collsDiv.hidden = true;
 
       const relLabel = rel === "" ? "\u2014" : rel;
+
       if (colls.length > 0) {
-        collsDiv.innerHTML = `<strong>Aspect level relation not set (collision):</strong> ${la} ${relLabel} ${lb}`;
-        collsDiv.innerHTML += "<br><strong>Collisions:</strong><ul>"
-          + colls.map(s => `<li>${s}</li>`).join("") + "</ul>";
+        // Collision — show red box, no additions committed
+        collsDiv.innerHTML =
+          `<strong>Relation not set — collision detected:</strong> ${la} ${relLabel} ${lb}<ul>`
+          + colls.map(s => `<li>${s}</li>`).join("")
+          + "</ul>";
         collsDiv.hidden = false;
-        addsDiv.hidden = true;
       } else {
-        const setLabel = rel === ""
-          ? "<strong>Aspect level relation unset:</strong>"
-          : "<strong>Aspect level relation set:</strong>";
-        addsDiv.innerHTML = `${setLabel} ${la} ${relLabel} ${lb}`;
+        // Success — show green box with direct and inferred additions
+        const verb = rel === "" ? "unset" : "set";
+        let html = `<strong>Relation ${verb}:</strong> ${la} ${relLabel} ${lb}`;
         if (adds.length > 0) {
-          addsDiv.innerHTML += "<br><strong>Inferred additions:</strong><ul>"
+          html += "<br><strong>Added to matrix:</strong><ul>"
             + adds.map(s => `<li>${s}</li>`).join("") + "</ul>";
         }
+        if (inferredAdds.length > 0) {
+          html += "<br><strong>Inferred in closure:</strong><ul>"
+            + inferredAdds.map(s => `<li>${s}</li>`).join("") + "</ul>";
+        }
+        addsDiv.innerHTML = html;
         addsDiv.hidden = false;
-        collsDiv.hidden = true;
       }
 
       panel.hidden = false;
-
       panel._hideTimer = setTimeout(() => { panel.hidden = true; }, 8000);
     }
 

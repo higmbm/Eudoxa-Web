@@ -565,6 +565,110 @@ class EudoxaManager:
             app_ac(origin, self.set_vdiff_relation(zero, vd_ab, TRUE), adds, colls)
         return (adds, colls)
 
+    def try_set_aspect_level_relation(self, aspect: str, la, lb, rel: str) -> Tuple:
+        """Validate and commit a relation addition using the closure as a staging area.
+
+        Flow:
+          1. Compute the current closure from the matrix.
+          2. Apply the requested addition to the closure (not the matrix).
+          3. If that causes an immediate collision, reject and return it.
+          4. Recompute the closure of the staged dict.
+          5. If the recomputed closure has collisions, reject and return them.
+          6. If clean, commit only the explicit addition to the matrix.
+             Return direct adds and any inferred additions from the closure.
+        """
+        import copy
+        a = self.get_aspect(aspect)
+        a_type = a.data_type
+        la_str, lb_str = str(la), str(lb)
+        if a is None:
+            raise ValueError(f"Aspect '{aspect}' does not exist.")
+        if la_str not in a.levels:
+            raise ValueError(f"Aspect level '{la}' [{a_type}] does not exist.")
+        if lb_str not in a.levels:
+            raise ValueError(f"Aspect level '{lb}' [{a_type}] does not exist.")
+
+        # Step 1: compute current closure as the staging area
+        staged, _, _ = self.closure()
+
+        # Step 2: apply the requested addition to the staging area
+        zero  = VDiff(aspect, None, None)
+        vd_ab = VDiff(aspect, la_str, lb_str)
+        vd_ba = VDiff(aspect, lb_str, la_str)
+        origin = ['SETAL', [aspect, la_str, rel, lb_str]]
+        staged_adds, staged_colls = [], []
+        if rel == UNDEFINED:
+            app_ac(origin, set_vdiff_relation(staged, vd_ab, zero, UNDEFINED), staged_adds, staged_colls)
+            app_ac(origin, set_vdiff_relation(staged, vd_ba, zero, UNDEFINED), staged_adds, staged_colls)
+            app_ac(origin, set_vdiff_relation(staged, zero, vd_ab, UNDEFINED), staged_adds, staged_colls)
+            app_ac(origin, set_vdiff_relation(staged, zero, vd_ba, UNDEFINED), staged_adds, staged_colls)
+        elif rel == BT:
+            app_ac(origin, set_vdiff_relation(staged, vd_ab, zero, TRUE),  staged_adds, staged_colls)
+            app_ac(origin, set_vdiff_relation(staged, vd_ba, zero, FALSE), staged_adds, staged_colls)
+            app_ac(origin, set_vdiff_relation(staged, zero, vd_ab, FALSE), staged_adds, staged_colls)
+            app_ac(origin, set_vdiff_relation(staged, zero, vd_ba, TRUE),  staged_adds, staged_colls)
+        elif rel == BTE:
+            app_ac(origin, set_vdiff_relation(staged, vd_ab, zero, TRUE),  staged_adds, staged_colls)
+            app_ac(origin, set_vdiff_relation(staged, zero, vd_ba, TRUE),  staged_adds, staged_colls)
+        elif rel == EQ:
+            app_ac(origin, set_vdiff_relation(staged, vd_ab, zero, TRUE),  staged_adds, staged_colls)
+            app_ac(origin, set_vdiff_relation(staged, vd_ba, zero, TRUE),  staged_adds, staged_colls)
+            app_ac(origin, set_vdiff_relation(staged, zero, vd_ab, TRUE),  staged_adds, staged_colls)
+            app_ac(origin, set_vdiff_relation(staged, zero, vd_ba, TRUE),  staged_adds, staged_colls)
+        elif rel == WTE:
+            app_ac(origin, set_vdiff_relation(staged, vd_ba, zero, TRUE),  staged_adds, staged_colls)
+            app_ac(origin, set_vdiff_relation(staged, zero, vd_ab, TRUE),  staged_adds, staged_colls)
+        elif rel == WT:
+            app_ac(origin, set_vdiff_relation(staged, vd_ba, zero, TRUE),  staged_adds, staged_colls)
+            app_ac(origin, set_vdiff_relation(staged, vd_ab, zero, FALSE), staged_adds, staged_colls)
+            app_ac(origin, set_vdiff_relation(staged, zero, vd_ba, FALSE), staged_adds, staged_colls)
+            app_ac(origin, set_vdiff_relation(staged, zero, vd_ab, TRUE),  staged_adds, staged_colls)
+
+        # Step 3: immediate collision in the staged area — reject
+        if staged_colls:
+            return ([], staged_colls, [])
+
+        # Step 4-5: recompute closure on the staged dict and check for inferred collisions
+        # Temporarily swap the matrix for the staged dict to reuse self.closure()
+        original_matrix = self.vdiff_comparison_matrix
+        self.vdiff_comparison_matrix = staged
+        _, inferred_adds, inferred_colls = self.closure()
+        self.vdiff_comparison_matrix = original_matrix
+
+        # Step 5: inferred collision — reject
+        if inferred_colls:
+            return ([], inferred_colls, [])
+
+        # Step 6: clean — commit only the explicit addition to the real matrix
+        adds, colls = [], []
+        if rel == UNDEFINED:
+            app_ac(origin, set_vdiff_relation(original_matrix, vd_ab, zero, UNDEFINED), adds, colls)
+            app_ac(origin, set_vdiff_relation(original_matrix, vd_ba, zero, UNDEFINED), adds, colls)
+            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ab, UNDEFINED), adds, colls)
+            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ba, UNDEFINED), adds, colls)
+        elif rel == BT:
+            app_ac(origin, set_vdiff_relation(original_matrix, vd_ab, zero, TRUE),  adds, colls)
+            app_ac(origin, set_vdiff_relation(original_matrix, vd_ba, zero, FALSE), adds, colls)
+            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ab, FALSE), adds, colls)
+            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ba, TRUE),  adds, colls)
+        elif rel == BTE:
+            app_ac(origin, set_vdiff_relation(original_matrix, vd_ab, zero, TRUE),  adds, colls)
+            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ba, TRUE),  adds, colls)
+        elif rel == EQ:
+            app_ac(origin, set_vdiff_relation(original_matrix, vd_ab, zero, TRUE),  adds, colls)
+            app_ac(origin, set_vdiff_relation(original_matrix, vd_ba, zero, TRUE),  adds, colls)
+            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ab, TRUE),  adds, colls)
+            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ba, TRUE),  adds, colls)
+        elif rel == WTE:
+            app_ac(origin, set_vdiff_relation(original_matrix, vd_ba, zero, TRUE),  adds, colls)
+            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ab, TRUE),  adds, colls)
+        elif rel == WT:
+            app_ac(origin, set_vdiff_relation(original_matrix, vd_ba, zero, TRUE),  adds, colls)
+            app_ac(origin, set_vdiff_relation(original_matrix, vd_ab, zero, FALSE), adds, colls)
+            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ba, FALSE), adds, colls)
+            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ab, TRUE),  adds, colls)
+        return (adds, [], inferred_adds)
+
     def get_aspect_level_relation(self, aspect: str, la, lb) -> str:
         a = self.get_aspect(aspect)
         a_type = a.data_type
