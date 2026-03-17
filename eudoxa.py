@@ -58,6 +58,13 @@ class Aspect:
         
     def add_level(self, level: str, description: str):
         logger.info(f"Adding level '{level}' to aspect '{self.name}'")
+        try:
+            parse_type(level, self.data_type)
+        except (ValueError, TypeError) as e:
+            raise ValueError(
+                f"Level '{level}' is not valid for aspect '{self.name}' "
+                f"with data_type '{self.data_type.__name__}': {e}"
+            )
         for l_key in self.levels.keys():
             vd = VDiff(self.name, l_key, level)
             self.vdiffs.append(vd)
@@ -116,8 +123,8 @@ class Aspect:
         return asp
 
 class Consequence:
-    def __init__(self, aspect_levels = {}):
-        self.aspect_levels: Dict[str, str] = aspect_levels
+    def __init__(self, aspect_levels=None):
+        self.aspect_levels: Dict[str, str] = aspect_levels if aspect_levels is not None else {}
 
     def __eq__(self, other):
         if not isinstance(other, Consequence):
@@ -967,11 +974,8 @@ class EudoxaManager:
         data_type_str = ws["B1"].value
         description = ws["A2"].value
         logger.info(f"Importing aspect '{aspect_name}'")
-        # Determine data type
-        data_type = str_to_type(data_type_str)
-
         # Create aspect and add levels
-        self.add_aspect(aspect_name, data_type, description)
+        self.add_aspect(aspect_name, data_type_str, description)
         rows = [["Aspect:", aspect_name], ["Type:", data_type_str], ["Description:", description]]
         # Read levels from row 3 onwards
         for row in ws.iter_rows(min_row=3, values_only=True):
