@@ -75,11 +75,23 @@
   <div id="levelGraphSection" hidden>
     <div class="level-graph-row">
       <div class="level-graph-col">
-        <h3>Defined relations</h3>
+        <div class="graph-col-header">
+          <h3>Defined relations</h3>
+          <button id="btnTrDefined" class="toggle-graph-btn" data-tr="true"
+                  title="Toggle between transitive reduction and full graph">
+            Show full graph
+          </button>
+        </div>
         <div id="levelGraphDefined" class="level-graph-container"></div>
       </div>
       <div class="level-graph-col">
-        <h3>Inferred closure</h3>
+        <div class="graph-col-header">
+          <h3>Inferred closure</h3>
+          <button id="btnTrClosure" class="toggle-graph-btn" data-tr="true"
+                  title="Toggle between transitive reduction and full graph">
+            Show full graph
+          </button>
+        </div>
         <div id="levelGraphClosure" class="level-graph-container"></div>
       </div>
     </div>
@@ -526,8 +538,7 @@
       },
       edges: {
         color:  { color: "#7aa0e0", highlight: "#4a7fd4" },
-        width:  1.5,
-        smooth: { type: "straightCross" }
+        width:  1.5
       },
       interaction: {
         dragNodes: false,
@@ -538,7 +549,7 @@
       physics: { enabled: false }
     };
 
-    function renderGraph(container, graphData) {
+    function renderGraph(container, graphData, curved = false) {
       container.innerHTML = "";
       if (!graphData || graphData.nodes.length === 0) {
         container.innerHTML = "<p class='muted'>No relations defined.</p>";
@@ -548,8 +559,42 @@
       const edges = new vis.DataSet(graphData.edges.map((e, i) => ({
         ...e, id: i, arrows: "to"
       })));
-      new vis.Network(container, { nodes, edges }, VIS_OPTIONS);
+      const options = JSON.parse(JSON.stringify(VIS_OPTIONS));
+      options.edges.smooth = curved
+        ? { type: "curvedCW", roundness: 0.3 }
+        : { type: "straightCross" };
+      new vis.Network(container, { nodes, edges }, options);
     }
+
+    // Cached graph data — holds all four variants after fetch
+    let graphCache = null;
+
+    // Per-graph TR state: true = show transitive reduction (default)
+    const trState = { defined: true, closure: true };
+
+    function currentKey(which) {
+      return which + (trState[which] ? "_tr" : "_full");
+    }
+
+    function applyTrToggle(which) {
+      const btn = document.getElementById(
+        which === "defined" ? "btnTrDefined" : "btnTrClosure"
+      );
+      const el = document.getElementById(
+        which === "defined" ? "levelGraphDefined" : "levelGraphClosure"
+      );
+      trState[which] = !trState[which];
+      btn.dataset.tr  = trState[which];
+      btn.textContent = trState[which] ? "Show full graph" : "Show reduction";
+      if (graphCache) renderGraph(el, graphCache[currentKey(which)], !trState[which]);
+    }
+
+    document.getElementById("btnTrDefined").addEventListener(
+      "click", () => applyTrToggle("defined")
+    );
+    document.getElementById("btnTrClosure").addEventListener(
+      "click", () => applyTrToggle("closure")
+    );
 
     async function renderLevelGraph() {
       const definedEl = document.getElementById("levelGraphDefined");
@@ -560,11 +605,12 @@
       if (!res.ok) {
         definedEl.innerHTML = "<p class='muted'>Could not load graph.</p>";
         closureEl.innerHTML = "";
+        graphCache = null;
         return;
       }
-      const data = await res.json();
-      renderGraph(definedEl, data.defined);
-      renderGraph(closureEl, data.closure);
+      graphCache = await res.json();
+      renderGraph(definedEl, graphCache[currentKey("defined")], !trState["defined"]);
+      renderGraph(closureEl, graphCache[currentKey("closure")], !trState["closure"]);
     }
   </script>
 

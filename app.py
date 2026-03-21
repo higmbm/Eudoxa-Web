@@ -373,13 +373,19 @@ def get_level_graph(aspect_name):
             ]
             return {"nodes": nodes, "edges": edges}
 
-        defined = nxdg_to_json(
-            mgr.create_aspect_level_relations_graph(aspect_name, use_closure=False)
-        )
-        closure = nxdg_to_json(
-            mgr.create_aspect_level_relations_graph(aspect_name, use_closure=True)
-        )
-        return {"defined": defined, "closure": closure}, 200
+        def build(use_closure, use_tr):
+            return nxdg_to_json(
+                mgr.create_aspect_level_relations_graph(
+                    aspect_name, use_closure=use_closure, use_tr=use_tr
+                )
+            )
+
+        return {
+            "defined_tr":   build(use_closure=False, use_tr=True),
+            "defined_full": build(use_closure=False, use_tr=False),
+            "closure_tr":   build(use_closure=True,  use_tr=True),
+            "closure_full": build(use_closure=True,  use_tr=False),
+        }, 200
     except Exception:
         logger.exception("Failed to build level graph")
         return {"error": "Could not compute level graph."}, 500
