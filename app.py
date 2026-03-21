@@ -488,6 +488,45 @@ def patch_level(aspect_name, level_name):
 # -----------------------------------------------------------
 #  REST: CONSEQUENCES
 # -----------------------------------------------------------
+@app.get("/api/dominance-graph")
+def get_dominance_graph():
+    """Return the transitively-reduced dominance graph as a node/edge list."""
+    mgr = load_manager_or_400()
+    if not mgr.consequences:
+        return {"nodes": [], "edges": []}, 200
+    try:
+        nxdg = mgr.create_dominance_graph()
+        # Build a reverse map from str(consequence) -> short_name
+        str_to_name = {str(c): name for name, c in mgr.consequences.items()}
+
+        def make_tooltip(short_name, consequence):
+            parts = [short_name] + [
+                f"{asp_name}: {consequence[asp_name]}"
+                for asp_name in mgr.aspects
+            ]
+            return " | ".join(parts)
+
+        nodes = [
+            {
+                "id":    node,
+                "label": f"{str_to_name[node]}: {node}"
+                          if node in str_to_name else node,
+                "title": make_tooltip(str_to_name[node],
+                                      mgr.consequences[str_to_name[node]])
+                          if node in str_to_name else node
+            }
+            for node in nxdg.nodes
+        ]
+        edges = [
+            {"from": src, "to": dst}
+            for src, dst in nxdg.edges
+        ]
+        return {"nodes": nodes, "edges": edges}, 200
+    except Exception:
+        logger.exception("Failed to build dominance graph")
+        return {"error": "Could not compute dominance graph."}, 500
+
+
 @app.get("/consequences")
 def consequences_html():
     """Render an HTML table of all consequences."""

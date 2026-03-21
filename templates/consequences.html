@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='styles/index.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='styles/consequences.css') }}">
   <script src="{{ url_for('static', filename='common.js') }}"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"></script>
 </head>
 <body>
 
@@ -43,6 +44,14 @@
         </tr>
       </tfoot>
     </table>
+
+    <div class="section-header" style="margin-top: 2rem;">
+      <h2>Dominance graph</h2>
+      <button id="btnToggleDomGraph">Show dominance graph</button>
+    </div>
+    <div id="domGraphSection" hidden>
+      <div id="domGraphContainer" class="level-graph-container"></div>
+    </div>
   </section>
 
   <!-- ── Consequence space dialog ─────────────────────────── -->
@@ -228,6 +237,8 @@
         document.getElementById("inputShortName").value = "";
         await loadAspects();
         await loadConsequences();
+        domGraphDirty = true;
+        if (domGraphVisible) { await renderDomGraph(); domGraphDirty = false; }
       } else {
         let msg = `${res.status} ${res.statusText}`;
         try { const j = await res.json(); msg = j.error || msg; } catch {}
@@ -333,6 +344,81 @@
     btnShow.addEventListener("click", openConsequenceSpaceDialog);
     btnClose.addEventListener("click", () => dialog.close());
     dialog.addEventListener("click", e => { if (e.target === dialog) dialog.close(); });
+
+    // ── Dominance graph ────────────────────────────────────────
+    let domGraphVisible = false;
+    let domGraphDirty   = true;
+    let domNetwork      = null;
+
+    const btnToggleDomGraph = document.getElementById("btnToggleDomGraph");
+    const domGraphSection   = document.getElementById("domGraphSection");
+
+    btnToggleDomGraph.addEventListener("click", async () => {
+      domGraphVisible = !domGraphVisible;
+      domGraphSection.hidden = !domGraphVisible;
+      btnToggleDomGraph.textContent = domGraphVisible ? "Hide dominance graph" : "Show dominance graph";
+      if (domGraphVisible) {
+        await renderDomGraph();
+      }
+    });
+
+    async function renderDomGraph() {
+      const container = document.getElementById("domGraphContainer");
+      if (!container) return;
+      container.innerHTML = "";
+
+      const res = await fetch("/api/dominance-graph");
+      if (!res.ok) {
+        container.innerHTML = "<p class='muted'>Could not load dominance graph.</p>";
+        return;
+      }
+      const data = await res.json();
+      if (data.nodes.length === 0) {
+        container.innerHTML = "<p class='muted'>No consequences defined yet.</p>";
+        return;
+      }
+
+      const nodes = new vis.DataSet(data.nodes);
+      const edges = new vis.DataSet(data.edges.map((e, i) => ({
+        ...e, id: i, arrows: "to"
+      })));
+      const options = {
+        layout: {
+          hierarchical: {
+            direction:       "UD",
+            sortMethod:      "directed",
+            levelSeparation: 80,
+            nodeSpacing:     120,
+            treeSpacing:     200
+          }
+        },
+        nodes: {
+          shape:   "box",
+          font:    { size: 16, face: "system-ui, -apple-system, sans-serif", color: "#333" },
+          color: {
+            background: "#dce8ff",
+            border:     "#7aa0e0",
+            highlight:  { background: "#b8d0ff", border: "#4a7fd4" }
+          },
+          margin:  12
+        },
+        edges: {
+          color:  { color: "#7aa0e0", highlight: "#4a7fd4" },
+          width:  1.5,
+          smooth: { type: "straightCross" }
+        },
+        interaction: {
+          dragNodes: false,
+          zoomView:  true,
+          dragView:  true,
+          hover:     true
+        },
+        physics: { enabled: false }
+      };
+      domNetwork = new vis.Network(container, { nodes, edges },
+                                   JSON.parse(JSON.stringify(options)));
+
+    }
 
     // ── Initial load ───────────────────────────────────────────
     loadAspects().then(loadConsequences);

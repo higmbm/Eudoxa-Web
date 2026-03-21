@@ -18,3 +18,12 @@
 .consequences-table th a:hover {
   text-decoration: underline;
 }
+/* ── Dominance graph container ──────────────────────────── */
+.level-graph-container {
+  width: 100%;
+  height: 360px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  margin-bottom: 2rem;
+  background: #fafafa;
+}
