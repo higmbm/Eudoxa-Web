@@ -363,9 +363,10 @@ def get_level_graph(aspect_name):
                     for m in members
                 ]
                 nodes.append({
-                    "id":    str(node_key),
-                    "label": lbl,
-                    "title": " | ".join(desc_parts)
+                    "id":      str(node_key),
+                    "label":   lbl,
+                    "title":   " | ".join(desc_parts),
+                    "members": members
                 })
             edges = [
                 {"from": str(src), "to": str(dst)}

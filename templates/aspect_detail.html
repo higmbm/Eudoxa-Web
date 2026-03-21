@@ -73,6 +73,13 @@
 
   <!-- Graph: hidden by default, shown above the matrix when toggled -->
   <div id="levelGraphSection" hidden>
+
+  <!-- Relation picker popup (shown when two nodes are selected) -->
+  <div id="graphRelPicker" class="graph-rel-picker" hidden>
+    <span id="graphRelPickerLabel" class="graph-rel-label"></span>
+    <div id="graphRelPickerBtns" class="graph-rel-btns"></div>
+    <button id="graphRelPickerCancel" class="graph-rel-cancel">Cancel</button>
+  </div>
     <div class="level-graph-row">
       <div class="level-graph-col">
         <div class="graph-col-header">
@@ -563,8 +570,97 @@
       options.edges.smooth = curved
         ? { type: "curvedCW", roundness: 0.3 }
         : { type: "straightCross" };
-      new vis.Network(container, { nodes, edges }, options);
+      return new vis.Network(container, { nodes, edges }, options);
     }
+
+    // ── Graph node interaction (click two nodes to set relation) ──
+    let firstNode  = null;   // id of first selected node
+    let nodeMembers = {};    // nodeId -> members array, rebuilt on each render
+    let definedNetwork = null;  // vis.Network instance for defined graph
+
+    function buildNodeMembersMap(graphData) {
+      const map = {};
+      if (!graphData) return map;
+      for (const n of graphData.nodes) map[n.id] = n.members || [n.label];
+      return map;
+    }
+
+    function clearFirstNode() {
+      firstNode = null;
+      if (definedNetwork) definedNetwork.unselectAll();
+      document.getElementById("graphRelPicker").hidden = true;
+    }
+
+    function showRelPicker(nodeAId, nodeBId) {
+      const membersA = nodeMembers[nodeAId] || [];
+      const membersB = nodeMembers[nodeBId] || [];
+      const labelA   = membersA.join(" \u223c ");
+      const labelB   = membersB.join(" \u223c ");
+
+      const picker  = document.getElementById("graphRelPicker");
+      const lbl     = document.getElementById("graphRelPickerLabel");
+      const btnsDiv = document.getElementById("graphRelPickerBtns");
+
+      lbl.textContent = `${labelA} ? ${labelB}`;
+      btnsDiv.innerHTML = "";
+
+      // Only show: unset (—), ≻, ⪰, ∼
+      // ⪯ and ≺ are omitted — click B then A to set the reverse relation
+      const graphRelOptions = relOptions.filter(
+        r => r === "" || r === "\u227b" || r === "\u2ab0" || r === "\u223c"
+      );
+      for (const rel of graphRelOptions) {
+        const btn = document.createElement("button");
+        btn.textContent = rel === "" ? "\u2014" : rel;
+        btn.className   = "graph-rel-opt-btn";
+        btn.addEventListener("click", async () => {
+          picker.hidden = true;
+          await applyGraphRelation(membersA, membersB, rel);
+          clearFirstNode();
+        });
+        btnsDiv.appendChild(btn);
+      }
+
+      picker.hidden = false;
+    }
+
+    async function applyGraphRelation(membersA, membersB, rel) {
+      // Apply relation to all pairs across the two equivalence classes
+      for (const la of membersA) {
+        for (const lb of membersB) {
+          const res = await fetch(
+            `/api/aspects/${encodeURIComponent(ASPECT_NAME)}/relations/`
+            + `${encodeURIComponent(la)}/${encodeURIComponent(lb)}`,
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ relation: rel })
+            }
+          );
+          const json = await res.json().catch(() => ({}));
+          if (res.ok) {
+            relCells[`${la}|||${lb}`] = rel;
+            showInferencePanel(la, rel, lb, json.adds || [], json.inferred_adds || [], []);
+          } else {
+            showInferencePanel(la, rel, lb, [], [], json.colls || [json.error] || []);
+            return;  // stop on first collision
+          }
+        }
+      }
+      // Refresh matrix and both graphs
+      await loadRelations();
+      await loadLevelGraph();
+    }
+
+    document.getElementById("graphRelPickerCancel").addEventListener(
+      "click", clearFirstNode
+    );
+
+    // Dismiss on click outside the graph section
+    document.addEventListener("click", e => {
+      const section = document.getElementById("levelGraphSection");
+      if (section && !section.contains(e.target)) clearFirstNode();
+    });
 
     // Cached graph data — holds all four variants after fetch
     let graphCache = null;
@@ -586,7 +682,20 @@
       trState[which] = !trState[which];
       btn.dataset.tr  = trState[which];
       btn.textContent = trState[which] ? "Show full graph" : "Show reduction";
-      if (graphCache) renderGraph(el, graphCache[currentKey(which)], !trState[which]);
+      if (graphCache) {
+        const net = renderGraph(el, graphCache[currentKey(which)], !trState[which]);
+        if (which === "defined" && net) {
+          nodeMembers = buildNodeMembersMap(graphCache[currentKey("defined")]);
+          definedNetwork = net;
+          definedNetwork.on("click", params => {
+            if (params.nodes.length !== 1) { clearFirstNode(); return; }
+            const clicked = params.nodes[0];
+            if (!firstNode) { firstNode = clicked; }
+            else if (firstNode === clicked) { clearFirstNode(); }
+            else { showRelPicker(firstNode, clicked); firstNode = null; }
+          });
+        }
+      }
     }
 
     document.getElementById("btnTrDefined").addEventListener(
@@ -609,7 +718,27 @@
         return;
       }
       graphCache = await res.json();
-      renderGraph(definedEl, graphCache[currentKey("defined")], !trState["defined"]);
+      clearFirstNode();
+
+      // Build the defined network with click interaction
+      const defData = graphCache[currentKey("defined")];
+      nodeMembers   = buildNodeMembersMap(defData);
+      definedNetwork = renderGraph(definedEl, defData, !trState["defined"]);
+      if (definedNetwork) {
+        definedNetwork.on("click", params => {
+          if (params.nodes.length !== 1) { clearFirstNode(); return; }
+          const clicked = params.nodes[0];
+          if (!firstNode) {
+            firstNode = clicked;
+          } else if (firstNode === clicked) {
+            clearFirstNode();
+          } else {
+            showRelPicker(firstNode, clicked);
+            firstNode = null;
+          }
+        });
+      }
+
       renderGraph(closureEl, graphCache[currentKey("closure")], !trState["closure"]);
     }
   </script>
