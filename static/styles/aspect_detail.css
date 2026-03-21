@@ -225,3 +225,21 @@ button.primary:hover {
   padding: 0.2rem 0.7rem;
   cursor: pointer;
 }
+
+/* ── Two-graph row layout ────────────────────────────────── */
+.level-graph-row {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.level-graph-col {
+  flex: 1;
+  min-width: 0;
+}
+
+.level-graph-col h3 {
+  margin-bottom: 0.4rem;
+  font-size: 1rem;
+  color: #444;
+}

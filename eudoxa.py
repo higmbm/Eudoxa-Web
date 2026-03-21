@@ -347,19 +347,77 @@ class EudoxaManager:
     def get_aspect(self, name: str) -> Aspect:
         return self.aspects[name]
 
-    def create_aspect_level_relations_graph(self, aspect_name: str):
+    def create_aspect_level_relations_graph(self, aspect_name: str,
+                                             use_closure: bool = True,
+                                             use_tr: bool = True):
+        """Build a DAG of aspect level relations.
+        Nodes are equivalence classes (sets of mutually EQ levels).
+        Edges run from better classes to worse classes.
+
+        use_closure=True  — use the inferred closure for comparisons,
+                            so transitively derived relations are included.
+        use_closure=False — use only the explicitly set matrix entries.
+        use_tr=True       — apply transitive reduction before returning.
+        use_tr=False      — return the full graph without reduction.
+        """
         import networkx as nx
-        nxdg = nx.DiGraph()
         aspect = self.get_aspect(aspect_name)
-        # TODO: Equivalence classes
-        for al in aspect.levels:
-            nxdg.add_node(al)
-        for al1 in aspect.levels:
-            for al2 in aspect.levels:
-                rel = self.get_aspect_level_relation(aspect_name, al1, al2)
-                if rel in [BT, BTE]:
-                    nxdg.add_edge(al1,al2)
-        return nx.transitive_reduction(nxdg)
+        levels = list(aspect.levels.keys())
+        if not levels:
+            return nx.DiGraph()
+
+        if use_closure:
+            closure, _, _ = self.closure()
+            def get_rel(la, lb):
+                zero  = VDiff(aspect_name, None, None)
+                vd_ab = VDiff(aspect_name, la, lb)
+                rel_ab_z = get_vdiff_relation(closure, vd_ab, zero)
+                rel_z_ab = get_vdiff_relation(closure, zero, vd_ab)
+                if rel_ab_z == TRUE and rel_z_ab == FALSE:     return BT
+                if rel_ab_z == TRUE and rel_z_ab == UNDEFINED: return BTE
+                if rel_ab_z == TRUE and rel_z_ab == TRUE:      return EQ
+                if rel_ab_z == UNDEFINED and rel_z_ab == TRUE: return WTE
+                if rel_ab_z == FALSE and rel_z_ab == TRUE:     return WT
+                return UNDEFINED
+        else:
+            def get_rel(la, lb):
+                return self.get_aspect_level_relation(aspect_name, la, lb)
+
+        # Step 1: compute equivalence classes (X ~ Y iff EQ)
+        eq_classes = nx.equivalence_classes(
+            levels,
+            lambda x, y: get_rel(x, y) == EQ
+        )
+
+        # Assign a stable label and pick a representative for each class
+        class_list = [sorted(cls) for cls in eq_classes]
+        class_list.sort()
+        rep   = {tuple(cls): cls[0] for cls in class_list}
+        label = {tuple(cls): " | ".join(cls) for cls in class_list}
+
+        # Step 2: build graph on equivalence classes
+        nxdg = nx.DiGraph()
+        for cls in class_list:
+            nxdg.add_node(tuple(cls))
+        for cls1 in class_list:
+            for cls2 in class_list:
+                if cls1 == cls2:
+                    continue
+                r1, r2 = rep[tuple(cls1)], rep[tuple(cls2)]
+                if get_rel(r1, r2) in (BT, BTE):
+                    nxdg.add_edge(tuple(cls1), tuple(cls2))
+
+        # Step 3: transitive reduction (optional)
+        if use_tr:
+            nxdg = nx.transitive_reduction(nxdg)
+
+        # Attach label and members as node attributes for callers
+        for cls in class_list:
+            key = tuple(cls)
+            if key in nxdg.nodes:
+                nxdg.nodes[key]['label']   = label[key]
+                nxdg.nodes[key]['members'] = cls
+        return nxdg
 
     def show_aspect_level_relations_graph(self, aspect_name, nxdg):
         import networkx as nx

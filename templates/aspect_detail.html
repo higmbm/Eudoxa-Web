@@ -73,7 +73,16 @@
 
   <!-- Graph: hidden by default, shown above the matrix when toggled -->
   <div id="levelGraphSection" hidden>
-    <div id="levelGraphContainer" class="level-graph-container"></div>
+    <div class="level-graph-row">
+      <div class="level-graph-col">
+        <h3>Defined relations</h3>
+        <div id="levelGraphDefined" class="level-graph-container"></div>
+      </div>
+      <div class="level-graph-col">
+        <h3>Inferred closure</h3>
+        <div id="levelGraphClosure" class="level-graph-container"></div>
+      </div>
+    </div>
   </div>
 
   <div id="relationsWrapper" class="relations-wrapper">
@@ -495,62 +504,67 @@
       }
     }
 
-    async function renderLevelGraph() {
-      const container = document.getElementById("levelGraphContainer");
-      if (!container) return;
+    const VIS_OPTIONS = {
+      layout: {
+        hierarchical: {
+          direction:       "UD",
+          sortMethod:      "directed",
+          levelSeparation: 80,
+          nodeSpacing:     120,
+          treeSpacing:     200
+        }
+      },
+      nodes: {
+        shape:  "box",
+        font:   { size: 14 },
+        color: {
+          background: "#dce8ff",
+          border:     "#7aa0e0",
+          highlight:  { background: "#b8d0ff", border: "#4a7fd4" }
+        },
+        margin: 8
+      },
+      edges: {
+        color:  { color: "#7aa0e0", highlight: "#4a7fd4" },
+        width:  1.5,
+        smooth: { type: "straightCross" }
+      },
+      interaction: {
+        dragNodes: false,
+        zoomView:  true,
+        dragView:  true,
+        hover:     true
+      },
+      physics: { enabled: false }
+    };
+
+    function renderGraph(container, graphData) {
       container.innerHTML = "";
+      if (!graphData || graphData.nodes.length === 0) {
+        container.innerHTML = "<p class='muted'>No relations defined.</p>";
+        return;
+      }
+      const nodes = new vis.DataSet(graphData.nodes);
+      const edges = new vis.DataSet(graphData.edges.map((e, i) => ({
+        ...e, id: i, arrows: "to"
+      })));
+      new vis.Network(container, { nodes, edges }, VIS_OPTIONS);
+    }
+
+    async function renderLevelGraph() {
+      const definedEl = document.getElementById("levelGraphDefined");
+      const closureEl = document.getElementById("levelGraphClosure");
+      if (!definedEl || !closureEl) return;
 
       const res = await fetch(`/api/aspects/${encodeURIComponent(ASPECT_NAME)}/level-graph`);
       if (!res.ok) {
-        container.innerHTML = "<p class='muted'>Could not load graph.</p>";
+        definedEl.innerHTML = "<p class='muted'>Could not load graph.</p>";
+        closureEl.innerHTML = "";
         return;
       }
       const data = await res.json();
-      if (data.nodes.length === 0) {
-        container.innerHTML = "<p class='muted'>No levels defined yet.</p>";
-        return;
-      }
-
-      const nodes = new vis.DataSet(data.nodes);
-      const edges = new vis.DataSet(data.edges.map((e, i) => ({
-        ...e, id: i, arrows: "to"
-      })));
-
-      const options = {
-        layout: {
-          hierarchical: {
-            direction:        "UD",
-            sortMethod:       "directed",
-            levelSeparation:  80,
-            nodeSpacing:      120,
-            treeSpacing:      200
-          }
-        },
-        nodes: {
-          shape:     "box",
-          font:      { size: 14 },
-          color: {
-            background: "#dce8ff",
-            border:     "#7aa0e0",
-            highlight:  { background: "#b8d0ff", border: "#4a7fd4" }
-          },
-          margin:    8
-        },
-        edges: {
-          color:  { color: "#7aa0e0", highlight: "#4a7fd4" },
-          width:  1.5,
-          smooth: { type: "straightCross" }
-        },
-        interaction: {
-          dragNodes:   false,
-          zoomView:    true,
-          dragView:    true,
-          hover:       true
-        },
-        physics: { enabled: false }
-      };
-
-      new vis.Network(container, { nodes, edges }, options);
+      renderGraph(definedEl, data.defined);
+      renderGraph(closureEl, data.closure);
     }
   </script>
 

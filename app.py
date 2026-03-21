@@ -345,28 +345,41 @@ def get_relations(aspect_name):
 
 @app.get("/api/aspects/<aspect_name>/level-graph")
 def get_level_graph(aspect_name):
-    """Return the transitively-reduced aspect level relations graph
-    as a node/edge list for client-side rendering."""
+    """Return both the defined-relations graph and the closure graph
+    as node/edge lists for client-side rendering."""
     mgr = load_manager_or_400()
     aspect = mgr.aspects.get(aspect_name)
     if not aspect:
         return {"error": f"Aspect '{aspect_name}' not found"}, 404
     try:
-        import networkx as nx
-        nxdg = mgr.create_aspect_level_relations_graph(aspect_name)
-        nodes = [
-            {
-                "id":    level,
-                "label": level,
-                "title": aspect.levels.get(level) or level
-            }
-            for level in nxdg.nodes
-        ]
-        edges = [
-            {"from": src, "to": dst}
-            for src, dst in nxdg.edges
-        ]
-        return {"nodes": nodes, "edges": edges}, 200
+        def nxdg_to_json(nxdg):
+            nodes = []
+            for node_key in nxdg.nodes:
+                attrs   = nxdg.nodes[node_key]
+                lbl     = attrs.get('label', str(node_key))
+                members = attrs.get('members', list(node_key))
+                desc_parts = [
+                    f"{m}: {aspect.levels[m]}" if aspect.levels.get(m) else m
+                    for m in members
+                ]
+                nodes.append({
+                    "id":    str(node_key),
+                    "label": lbl,
+                    "title": " | ".join(desc_parts)
+                })
+            edges = [
+                {"from": str(src), "to": str(dst)}
+                for src, dst in nxdg.edges
+            ]
+            return {"nodes": nodes, "edges": edges}
+
+        defined = nxdg_to_json(
+            mgr.create_aspect_level_relations_graph(aspect_name, use_closure=False)
+        )
+        closure = nxdg_to_json(
+            mgr.create_aspect_level_relations_graph(aspect_name, use_closure=True)
+        )
+        return {"defined": defined, "closure": closure}, 200
     except Exception:
         logger.exception("Failed to build level graph")
         return {"error": "Could not compute level graph."}, 500
