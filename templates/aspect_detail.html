@@ -66,19 +66,22 @@
   <p id="addLevelError" class="error" hidden data-aspect="{{ aspect_name }}"></p>
 
   <!-- ── Level relations ──────────────────────────────────────── -->
-  <h2>Level relations</h2>
+  <div class="section-header">
+    <h2>Level relations</h2>
+    <button id="btnToggleGraph" class="toggle-graph-btn">Show graph</button>
+  </div>
+
+  <!-- Graph: hidden by default, shown above the matrix when toggled -->
+  <div id="levelGraphSection" hidden>
+    <div id="levelGraphContainer" class="level-graph-container"></div>
+  </div>
+
   <div id="relationsWrapper" class="relations-wrapper">
     <p class="muted" id="relationsPlaceholder">Loading...</p>
   </div>
   <div id="inferencePanel" class="inference-panel" hidden>
     <div id="inferenceAdds"  class="inference-adds"  hidden></div>
     <div id="inferenceColls" class="inference-colls" hidden></div>
-  </div>
-
-  <!-- ── Level relations graph ────────────────────────────── -->
-  <h2>Level relations graph</h2>
-  <div id="levelGraphContainer" class="level-graph-container">
-    <p class="muted" id="levelGraphPlaceholder">Loading...</p>
   </div>
 
   <script>
@@ -465,23 +468,48 @@
     });
 
     loadRelations();
-    loadLevelGraph();
 
     // ── Level relations graph ──────────────────────────────
+    let graphVisible = false;
+    let graphDirty   = true;   // true = needs a reload before display
+
+    const btnToggleGraph    = document.getElementById("btnToggleGraph");
+    const levelGraphSection = document.getElementById("levelGraphSection");
+
+    btnToggleGraph.addEventListener("click", async () => {
+      graphVisible = !graphVisible;
+      levelGraphSection.hidden = !graphVisible;
+      btnToggleGraph.textContent = graphVisible ? "Hide graph" : "Show graph";
+      if (graphVisible && graphDirty) {
+        await renderLevelGraph();
+        graphDirty = false;
+      }
+    });
+
     async function loadLevelGraph() {
+      // Mark dirty; render immediately only if the graph is currently visible
+      graphDirty = true;
+      if (graphVisible) {
+        await renderLevelGraph();
+        graphDirty = false;
+      }
+    }
+
+    async function renderLevelGraph() {
       const container = document.getElementById("levelGraphContainer");
-      const placeholder = document.getElementById("levelGraphPlaceholder");
+      if (!container) return;
+      container.innerHTML = "";
+
       const res = await fetch(`/api/aspects/${encodeURIComponent(ASPECT_NAME)}/level-graph`);
       if (!res.ok) {
-        if (placeholder) placeholder.textContent = "Could not load graph.";
+        container.innerHTML = "<p class='muted'>Could not load graph.</p>";
         return;
       }
       const data = await res.json();
       if (data.nodes.length === 0) {
-        if (placeholder) placeholder.textContent = "No levels defined yet.";
+        container.innerHTML = "<p class='muted'>No levels defined yet.</p>";
         return;
       }
-      if (placeholder) placeholder.remove();
 
       const nodes = new vis.DataSet(data.nodes);
       const edges = new vis.DataSet(data.edges.map((e, i) => ({

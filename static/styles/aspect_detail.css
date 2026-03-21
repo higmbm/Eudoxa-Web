@@ -207,3 +207,21 @@ button.primary:hover {
   margin-bottom: 2rem;
   background: #fafafa;
 }
+
+/* ── Level relations section header (h2 + toggle button) ─── */
+.section-header {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: 0.8rem;
+}
+
+.section-header h2 {
+  margin-bottom: 0;
+}
+
+.toggle-graph-btn {
+  font-size: 0.85rem;
+  padding: 0.2rem 0.7rem;
+  cursor: pointer;
+}
