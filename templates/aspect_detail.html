@@ -205,6 +205,7 @@
         clearLevelForm();
         document.getElementById("inputLevel").focus();
         loadRelations();
+        loadLevelGraph();
       } else {
         let msg = `${res.status} ${res.statusText}`;
         try { const j = await res.json(); msg = j.error || msg; } catch {}
@@ -362,8 +363,9 @@
         if (res.ok) {
           relCells[`${la}|||${lb}`] = newRel;
           showInferencePanel(la, newRel, lb, json.adds || [], json.inferred_adds || [], []);
-          // Reload full matrix to reflect any inferred relations
+          // Reload full matrix and graph to reflect any inferred relations
           await loadRelations();
+          await loadLevelGraph();
         } else {
           showInferencePanel(la, newRel, lb, [], [], json.colls || [json.error] || []);
           restoreCell(sel);
