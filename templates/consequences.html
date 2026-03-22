@@ -407,7 +407,8 @@
       const url = "/api/dominance-graph?tr=" + (domTrActive ? "1" : "0");
       const res = await fetch(url);
       if (!res.ok) {
-        container.innerHTML = "<p class='muted'>Could not load dominance graph.</p>";
+        const errData = await res.json().catch(() => ({}));
+        container.innerHTML = `<p class='error'>${errData.error || 'Could not load dominance graph.'}</p>`;
         legendEl.hidden = true; excludedEl.hidden = true;
         return;
       }
