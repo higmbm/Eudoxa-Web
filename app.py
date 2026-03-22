@@ -546,9 +546,9 @@ def get_dominance_graph():
             "edges_confirmed": edges_confirmed,
             "edges_possible":  edges_possible
         }, 200
-    except Exception:
+    except Exception as e:
         logger.exception("Failed to build dominance graph")
-        return {"error": "Could not compute dominance graph."}, 500
+        return {"error": f"Could not compute dominance graph: {e}"}, 500
 
 
 @app.get("/consequences")
