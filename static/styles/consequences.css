@@ -100,3 +100,41 @@
 .rel-equal  { background: #e8f0fe !important; }
 .rel-worse  { background: #fce8e6 !important; }
 .rel-unset  { background: #fffde7 !important; }
+
+/* ── Comparison table relation dropdown ─────────────────── */
+.dom-rel-select {
+  font-size: 1rem;
+  width: 100%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: center;
+}
+
+/* ── Inference panel (mirrors aspect_detail.css) ────────── */
+.inference-panel {
+  margin-top: 0.8rem;
+}
+
+.inference-adds {
+  padding: 0.5rem 1rem;
+  background: #e8f5e9;
+  border: 1px solid #81c784;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.inference-colls {
+  padding: 0.5rem 1rem;
+  background: #ffebee;
+  border: 1px solid #e57373;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+/* ── Diagonal cell (same level, not editable) ───────────── */
+.rel-diag {
+  background: #d8d8d8 !important;
+  color: #888;
+  cursor: default;
+}

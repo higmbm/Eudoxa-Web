@@ -30,6 +30,10 @@
     <div id="domGraphContainer" class="level-graph-container"></div>
     <div id="domGraphExcluded" class="dom-excluded" hidden></div>
     <div id="domCompare" class="dom-compare" hidden></div>
+    <div id="inferencePanel" class="inference-panel" hidden>
+      <div id="inferenceAdds"  class="inference-adds"  hidden></div>
+      <div id="inferenceColls" class="inference-colls" hidden></div>
+    </div>
   </section>
 
   <script>
@@ -217,38 +221,113 @@
       fetchAndRenderComparison(a, b, panel);
     }
 
+    function showInferencePanel(la, rel, lb, adds, inferredAdds, colls) {
+      const panel    = document.getElementById("inferencePanel");
+      const addsDiv  = document.getElementById("inferenceAdds");
+      const collsDiv = document.getElementById("inferenceColls");
+      clearTimeout(panel._hideTimer);
+      addsDiv.hidden = true; collsDiv.hidden = true;
+      const relLabel = rel === "" ? "\u2014" : rel;
+      if (colls.length > 0) {
+        collsDiv.innerHTML = `<strong>Relation not set \u2014 collision detected:</strong> ${la} ${relLabel} ${lb}<ul>`
+          + colls.map(s => `<li>${s}</li>`).join("") + "</ul>";
+        collsDiv.hidden = false;
+      } else {
+        const verb = rel === "" ? "unset" : "set";
+        let html = `<strong>Relation ${verb}:</strong> ${la} ${relLabel} ${lb}`;
+        if (adds.length > 0)
+          html += "<br><strong>Added to matrix:</strong><ul>" + adds.map(s => `<li>${s}</li>`).join("") + "</ul>";
+        if (inferredAdds.length > 0)
+          html += "<br><strong>Inferred in closure:</strong><ul>" + inferredAdds.map(s => `<li>${s}</li>`).join("") + "</ul>";
+        addsDiv.innerHTML = html; addsDiv.hidden = false;
+      }
+      panel.hidden = false;
+      panel._hideTimer = setTimeout(() => { panel.hidden = true; }, 8000);
+    }
+
     async function fetchAndRenderComparison(a, b, panel) {
-      const relMaps = {};
+      const relMaps = {}, optMaps = {};
       await Promise.all(domAspects.map(async asp => {
         const res = await fetch(`/api/aspects/${encodeURIComponent(asp)}/relations`);
         if (res.ok) {
           const data = await res.json();
           relMaps[asp] = data.cells || {};
+          optMaps[asp] = data.options || [];
         }
       }));
 
-      let html = `<table class="data-table dom-compare-table">`;
+      const table = document.createElement("table");
+      table.className = "data-table dom-compare-table";
 
-      html += `<tr><td class="dom-compare-name">${a.name}</td>`;
-      domAspects.forEach(asp => { html += `<td>${a.levels[asp] ?? ""}</td>`; });
-      html += "</tr>";
+      // Row A
+      const trA = document.createElement("tr");
+      const tdNameA = document.createElement("td");
+      tdNameA.className = "dom-compare-name"; tdNameA.textContent = a.name;
+      trA.appendChild(tdNameA);
+      domAspects.forEach(asp => {
+        const td = document.createElement("td"); td.textContent = a.levels[asp] ?? ""; trA.appendChild(td);
+      });
 
-      html += `<tr><td class="dom-compare-divider"></td>`;
+      // Relation row with dropdowns
+      const trRel = document.createElement("tr");
+      const tdDiv = document.createElement("td"); tdDiv.className = "dom-compare-divider";
+      trRel.appendChild(tdDiv);
       domAspects.forEach(asp => {
         const la  = a.levels[asp] ?? "";
         const lb  = b.levels[asp] ?? "";
         const rel = relMaps[asp]?.[`${la}|||${lb}`] ?? "";
-        const lbl = rel === "" ? "?" : rel;
-        html += `<td class="${relClass(rel)} dom-compare-rel">${lbl}</td>`;
+        const td  = document.createElement("td");
+
+        if (la === lb) {
+          // Same level — grey diagonal cell, not editable
+          td.className = "rel-diag dom-compare-rel";
+          td.textContent = "\u223c";
+        } else {
+          td.className = relClass(rel) + " dom-compare-rel";
+          const sel = document.createElement("select");
+          sel.className = "rel-select dom-rel-select";
+          (optMaps[asp] || []).forEach(opt => {
+            const o = document.createElement("option");
+            o.value = opt; o.textContent = opt === "" ? "\u2014" : opt;
+            if (opt === rel) o.selected = true;
+            sel.appendChild(o);
+          });
+          let currentRel = rel;
+          sel.addEventListener("change", async () => {
+            const newRel = sel.value;
+            const res = await fetch(
+              `/api/aspects/${encodeURIComponent(asp)}/relations/${encodeURIComponent(la)}/${encodeURIComponent(lb)}`,
+              { method: "PATCH", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ relation: newRel }) }
+            );
+            const json = await res.json().catch(() => ({}));
+            if (res.ok) {
+              currentRel = newRel;
+              td.className = relClass(newRel) + " dom-compare-rel";
+              showInferencePanel(la, newRel, lb, json.adds || [], json.inferred_adds || [], []);
+              await renderDomGraph();
+              fetchAndRenderComparison(a, b, panel);
+            } else {
+              sel.value = currentRel;
+              showInferencePanel(la, newRel, lb, [], [], json.colls || [json.error] || []);
+            }
+          });
+          td.appendChild(sel);
+        }
+        trRel.appendChild(td);
       });
-      html += "</tr>";
 
-      html += `<tr><td class="dom-compare-name">${b.name}</td>`;
-      domAspects.forEach(asp => { html += `<td>${b.levels[asp] ?? ""}</td>`; });
-      html += "</tr></table>";
+      // Row B
+      const trB = document.createElement("tr");
+      const tdNameB = document.createElement("td");
+      tdNameB.className = "dom-compare-name"; tdNameB.textContent = b.name;
+      trB.appendChild(tdNameB);
+      domAspects.forEach(asp => {
+        const td = document.createElement("td"); td.textContent = b.levels[asp] ?? ""; trB.appendChild(td);
+      });
 
-      panel.innerHTML = html;
-      panel.hidden = false;
+      table.appendChild(trA); table.appendChild(trRel); table.appendChild(trB);
+      panel.innerHTML = ""; panel.appendChild(table); panel.hidden = false;
     }
 
     document.addEventListener("click", e => {
