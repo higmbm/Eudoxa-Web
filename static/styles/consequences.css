@@ -138,3 +138,8 @@
   color: #888;
   cursor: default;
 }
+
+/* ── Selected consequence row highlight ─────────────────── */
+#consequencesBody tr.cons-selected td {
+  background: #e8f0fe !important;
+}

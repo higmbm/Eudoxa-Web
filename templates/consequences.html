@@ -47,6 +47,19 @@
 
   </section>
 
+  <!-- ── Consequence comparison ─────────────────────────── -->
+  <section class="section" id="consCompareSection" hidden>
+    <div class="section-header">
+      <h2>Compare consequences</h2>
+      <button id="btnClearConsCompare" class="secondary">Clear</button>
+    </div>
+    <div id="consCompare" class="dom-compare"></div>
+    <div id="consInferencePanel" class="inference-panel" hidden>
+      <div id="consInferenceAdds"  class="inference-adds"  hidden></div>
+      <div id="consInferenceColls" class="inference-colls" hidden></div>
+    </div>
+  </section>
+
   <!-- ── Consequence space dialog ─────────────────────────── -->
   <dialog id="consequenceSpaceDialog">
     <div class="dialog-header">
@@ -178,17 +191,26 @@
       }
 
       tbody.innerHTML = "";
+      consNodeData = {};
       data.rows.forEach(row => {
         const tr = document.createElement("tr");
+        const shortName = row[0];
+        // Build consNodeData: {name, levels: {asp: level}}
+        const levels = {};
+        aspectData.forEach((a, i) => { levels[a.name] = row[i + 1] ?? ""; });
+        consNodeData[shortName] = { name: shortName, levels };
         row.forEach((cell, i) => {
           const td = document.createElement("td");
           if (i === 0) {
             const b = document.createElement("strong");
             b.textContent = cell;
             td.appendChild(b);
+            // Click on name cell selects this consequence for comparison
+            td.style.cursor = "pointer";
+            td.title = "Click to select for comparison";
+            td.addEventListener("click", () => onConsNameClick(shortName, tr));
           } else {
             td.textContent = cell;
-            // Add tooltip if a description exists for this level
             const aspName = aspectData[i - 1]?.name;
             const desc = aspName && levelDescs[aspName]?.[cell];
             if (desc) td.title = desc;
@@ -352,6 +374,176 @@
     btnClose.addEventListener("click", () => dialog.close());
     dialog.addEventListener("click", e => { if (e.target === dialog) dialog.close(); });
 
+
+    // ── Consequence comparison ─────────────────────────────
+    let consNodeData  = {};
+    let consFirstName = null;
+    let consAspects   = [];
+
+    function relClass(rel) {
+      if (rel === "\u227b" || rel === "\u2ab0") return "rel-better";
+      if (rel === "\u223c")                     return "rel-equal";
+      if (rel === "\u227a" || rel === "\u2aaf") return "rel-worse";
+      return "rel-unset";
+    }
+
+    function showConsInferencePanel(la, rel, lb, adds, inferredAdds, colls) {
+      const panel    = document.getElementById("consInferencePanel");
+      const addsDiv  = document.getElementById("consInferenceAdds");
+      const collsDiv = document.getElementById("consInferenceColls");
+      clearTimeout(panel._hideTimer);
+      addsDiv.hidden = true; collsDiv.hidden = true;
+      const relLabel = rel === "" ? "\u2014" : rel;
+      if (colls.length > 0) {
+        collsDiv.innerHTML = `<strong>Relation not set \u2014 collision detected:</strong> ${la} ${relLabel} ${lb}<ul>`
+          + colls.map(s => `<li>${s}</li>`).join("") + "</ul>";
+        collsDiv.hidden = false;
+      } else {
+        const verb = rel === "" ? "unset" : "set";
+        let html = `<strong>Relation ${verb}:</strong> ${la} ${relLabel} ${lb}`;
+        if (adds.length > 0)
+          html += "<br><strong>Added to matrix:</strong><ul>" + adds.map(s => `<li>${s}</li>`).join("") + "</ul>";
+        if (inferredAdds.length > 0)
+          html += "<br><strong>Inferred in closure:</strong><ul>" + inferredAdds.map(s => `<li>${s}</li>`).join("") + "</ul>";
+        addsDiv.innerHTML = html; addsDiv.hidden = false;
+      }
+      panel.hidden = false;
+      panel._hideTimer = setTimeout(() => { panel.hidden = true; }, 8000);
+    }
+
+    function clearConsCompare() {
+      consFirstName = null;
+      // Remove highlight from all rows
+      document.querySelectorAll("#consequencesBody tr.cons-selected")
+        .forEach(r => r.classList.remove("cons-selected"));
+      document.getElementById("consCompareSection").hidden = true;
+      document.getElementById("consInferencePanel").hidden = true;
+    }
+
+    document.getElementById("btnClearConsCompare")
+      .addEventListener("click", clearConsCompare);
+
+    function showConsFirstRow(name) {
+      consAspects = aspectData.map(a => a.name);
+      const a = consNodeData[name];
+      if (!a) return;
+      const table = document.createElement("table");
+      table.className = "data-table dom-compare-table";
+      const tr = document.createElement("tr");
+      const tdName = document.createElement("td");
+      tdName.className = "dom-compare-name"; tdName.textContent = a.name;
+      tr.appendChild(tdName);
+      consAspects.forEach(asp => {
+        const td = document.createElement("td"); td.textContent = a.levels[asp] ?? ""; tr.appendChild(td);
+      });
+      table.appendChild(tr);
+      const panel = document.getElementById("consCompare");
+      panel.innerHTML = ""; panel.appendChild(table);
+      document.getElementById("consCompareSection").hidden = false;
+    }
+
+    function onConsNameClick(name, tr) {
+      if (!consFirstName) {
+        consFirstName = name;
+        document.querySelectorAll("#consequencesBody tr.cons-selected")
+          .forEach(r => r.classList.remove("cons-selected"));
+        tr.classList.add("cons-selected");
+        showConsFirstRow(name);
+      } else if (consFirstName === name) {
+        clearConsCompare();
+      } else {
+        tr.classList.add("cons-selected");
+        fetchAndRenderConsComparison(
+          consNodeData[consFirstName], consNodeData[name],
+          document.getElementById("consCompare")
+        );
+        consFirstName = null;
+      }
+    }
+
+    async function fetchAndRenderConsComparison(a, b, panel) {
+      consAspects = aspectData.map(a => a.name);
+      const relMaps = {}, optMaps = {};
+      await Promise.all(consAspects.map(async asp => {
+        const res = await fetch(`/api/aspects/${encodeURIComponent(asp)}/relations`);
+        if (res.ok) {
+          const data = await res.json();
+          relMaps[asp] = data.cells || {};
+          optMaps[asp] = data.options || [];
+        }
+      }));
+
+      const table = document.createElement("table");
+      table.className = "data-table dom-compare-table";
+
+      // Row A
+      const trA = document.createElement("tr");
+      const tdNameA = document.createElement("td");
+      tdNameA.className = "dom-compare-name"; tdNameA.textContent = a.name;
+      trA.appendChild(tdNameA);
+      consAspects.forEach(asp => {
+        const td = document.createElement("td"); td.textContent = a.levels[asp] ?? ""; trA.appendChild(td);
+      });
+
+      // Relation row with dropdowns
+      const trRel = document.createElement("tr");
+      const tdDiv = document.createElement("td"); tdDiv.className = "dom-compare-divider";
+      trRel.appendChild(tdDiv);
+      consAspects.forEach(asp => {
+        const la  = a.levels[asp] ?? "";
+        const lb  = b.levels[asp] ?? "";
+        const rel = relMaps[asp]?.[`${la}|||${lb}`] ?? "";
+        const td  = document.createElement("td");
+        if (la === lb) {
+          td.className = "rel-diag dom-compare-rel";
+          td.textContent = "\u223c";
+        } else {
+          td.className = relClass(rel) + " dom-compare-rel";
+          const sel = document.createElement("select");
+          sel.className = "rel-select dom-rel-select";
+          (optMaps[asp] || []).forEach(opt => {
+            const o = document.createElement("option");
+            o.value = opt; o.textContent = opt === "" ? "\u2014" : opt;
+            if (opt === rel) o.selected = true;
+            sel.appendChild(o);
+          });
+          let currentRel = rel;
+          sel.addEventListener("change", async () => {
+            const newRel = sel.value;
+            const res = await fetch(
+              `/api/aspects/${encodeURIComponent(asp)}/relations/${encodeURIComponent(la)}/${encodeURIComponent(lb)}`,
+              { method: "PATCH", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ relation: newRel }) }
+            );
+            const json = await res.json().catch(() => ({}));
+            if (res.ok) {
+              currentRel = newRel;
+              td.className = relClass(newRel) + " dom-compare-rel";
+              showConsInferencePanel(la, newRel, lb, json.adds || [], json.inferred_adds || [], []);
+              fetchAndRenderConsComparison(a, b, panel);
+            } else {
+              sel.value = currentRel;
+              showConsInferencePanel(la, newRel, lb, [], [], json.colls || [json.error] || []);
+            }
+          });
+          td.appendChild(sel);
+        }
+        trRel.appendChild(td);
+      });
+
+      // Row B
+      const trB = document.createElement("tr");
+      const tdNameB = document.createElement("td");
+      tdNameB.className = "dom-compare-name"; tdNameB.textContent = b.name;
+      trB.appendChild(tdNameB);
+      consAspects.forEach(asp => {
+        const td = document.createElement("td"); td.textContent = b.levels[asp] ?? ""; trB.appendChild(td);
+      });
+
+      table.appendChild(trA); table.appendChild(trRel); table.appendChild(trB);
+      panel.innerHTML = ""; panel.appendChild(table);
+      document.getElementById("consCompareSection").hidden = false;
+    }
 
     // ── Initial load ───────────────────────────────────────────
     loadAspects().then(loadConsequences);
