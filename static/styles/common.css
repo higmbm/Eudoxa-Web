@@ -141,3 +141,22 @@ td.editable-desc:empty::before {
   padding: 0.25rem 0.55rem;
   vertical-align: middle;
 }
+/* ── Site navigation bar ─────────────────────────────────── */
+.site-nav {
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+  color: #555;
+}
+
+.site-nav a {
+  color: #0066cc;
+  text-decoration: none;
+}
+
+.site-nav a:hover {
+  text-decoration: underline;
+}
+
+.site-nav-sep {
+  color: #aaa;
+}
