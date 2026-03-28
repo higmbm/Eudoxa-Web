@@ -1329,10 +1329,7 @@ class EudoxaManager:
             if len(parts) != 2:
                 return None
             a, b = parts[0].strip(), parts[1].strip()
-            # Accept (*,*) and legacy (None,None) as zero-diff
-            if (a == "*" and b == "*") or (a == "None" and b == "None"):
-                return ZDIFF_TUPLE
-            return (a, b)
+            return ZDIFF_TUPLE if (a == "*" and b == "*") else (a, b)
 
         # Parse column headers (row 3, from col D)
         col_headers = []   # [(aspect_name, vd_key_tuple), ...]
@@ -1444,7 +1441,9 @@ class EudoxaManager:
             "aspect_errors":        {},
             "closure_collisions":   [],
             "vdcm_adds":            0,
+            "vdcm_add_details":     [],
             "imported_consequences": [],
+            "imported_consequence_details": [],
             "consequence_errors":   [],
             "missing_cons_sheet":   False,
         }
@@ -1487,10 +1486,23 @@ class EudoxaManager:
                     result["aspect_errors"][aspect_name] = errors
                     continue
 
+            asp_obj = tmp.aspects[aspect_name]
+            # Collect non-trivial relations for detail view
+            # Only show BT/BTE/EQ to avoid showing both A≻B and B≺A
+            rel_details = []
+            for la in asp_obj.levels:
+                for lb in asp_obj.levels:
+                    if la == lb:
+                        continue
+                    rel = tmp.get_aspect_level_relation(aspect_name, la, lb)
+                    if rel in (BT, BTE, EQ):
+                        rel_details.append(f"{la}{rel}{lb}")
             result["imported_aspects"].append({
                 "name":          aspect_name,
-                "level_count":   len(tmp.aspects[aspect_name].levels),
+                "level_count":   len(asp_obj.levels),
+                "levels":        list(asp_obj.levels.keys()),
                 "has_relations": has_relations,
+                "relations":     rel_details,
             })
 
         if result["aspect_errors"]:
@@ -1503,6 +1515,11 @@ class EudoxaManager:
                 wb[vdcm_sheet]
             )
             result["vdcm_adds"] = len(vdcm_result["adds"])
+            result["vdcm_add_details"] = [
+                f"{repr(add[0])} {add[1]} {repr(add[2])}"
+                for add in vdcm_result["adds"]
+                if len(add) >= 3
+            ]
             if vdcm_result["collisions"]:
                 for coll in vdcm_result["collisions"]:
                     vd1, old_rel, vd2, new_rel = coll
@@ -1562,6 +1579,10 @@ class EudoxaManager:
                     try:
                         tmp.add_consequence(short_name, aspect_levels)
                         result["imported_consequences"].append(short_name)
+                        result["imported_consequence_details"].append({
+                            "name": short_name,
+                            "repr": str(tmp.consequences[short_name])
+                        })
                     except ValueError as e:
                         result["consequence_errors"].append(f"'{short_name}': {e}")
             if result["consequence_errors"]:

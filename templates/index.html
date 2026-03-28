@@ -277,9 +277,13 @@
       });
     }
 
-    function fmtAspect(a) {
-      const rel = a.has_relations ? ", with relations" : "";
-      return `${a.name} (${a.level_count} level${a.level_count !== 1 ? "s" : ""}${rel})`;
+    function collapsible(summary, items, renderItem) {
+      if (!items || items.length === 0) return "";
+      const itemsHtml = items.map(renderItem).join("");
+      return `<details class="import-detail">`
+           + `<summary>${summary}</summary>`
+           + `<ul>${itemsHtml}</ul>`
+           + `</details>`;
     }
 
     function showImportResult(result) {
@@ -297,13 +301,21 @@
       const success = result.success;
       importResultEl.className = "import-result" + (success ? "" : " import-result-error");
 
-      // Aspects imported
+      // Aspects imported — collapsible, each aspect shows levels + relations
       if (result.imported_aspects && result.imported_aspects.length > 0) {
-        html += `<p><strong>Aspects imported (${result.imported_aspects.length}):</strong> `
-          + result.imported_aspects.map(fmtAspect).join(", ") + "</p>";
+        const n = result.imported_aspects.length;
+        html += collapsible(
+          `<strong>Aspects imported (${n})</strong>`,
+          result.imported_aspects,
+          a => {
+            const levels = (a.levels || []).join(", ");
+            const rels   = (a.relations || []).map(r => `<li class="import-detail-sub">${r}</li>`).join("");
+            return `<li><strong>${a.name}:</strong> ${levels}${rels ? "<ul>" + rels + "</ul>" : ""}</li>`;
+          }
+        );
       }
 
-      // Per-aspect errors
+      // Per-aspect errors (no detail needed — errors are already specific)
       if (result.aspect_errors && Object.keys(result.aspect_errors).length > 0) {
         html += "<p><strong>Aspect errors (import cancelled):</strong></p><ul>";
         for (const [asp, errs] of Object.entries(result.aspect_errors)) {
@@ -312,25 +324,33 @@
         html += "</ul>";
       }
 
-      // VDCM additions
+      // VDCM additions — collapsible
       if (result.vdcm_adds > 0) {
-        html += `<p><strong>Value difference relations imported:</strong> ${result.vdcm_adds}</p>`;
+        html += collapsible(
+          `<strong>Value difference relations imported (${result.vdcm_adds})</strong>`,
+          result.vdcm_add_details || [],
+          s => `<li>${s}</li>`
+        );
       }
 
-      // Closure collisions
+      // Closure collisions (errors — no collapse needed)
       if (result.closure_collisions && result.closure_collisions.length > 0) {
         html += "<p><strong>Closure collisions (import cancelled):</strong></p><ul>";
         result.closure_collisions.forEach(c => { html += `<li>${c}</li>`; });
         html += "</ul>";
       }
 
-      // Consequences
+      // Consequences imported — collapsible
       if (result.imported_consequences && result.imported_consequences.length > 0) {
-        html += `<p><strong>Consequences imported (${result.imported_consequences.length}):</strong> `
-          + result.imported_consequences.join(", ") + "</p>";
+        const details = result.imported_consequence_details || [];
+        html += collapsible(
+          `<strong>Consequences imported (${result.imported_consequences.length})</strong>`,
+          details.length > 0 ? details : result.imported_consequences.map(n => ({name: n, repr: ""})),
+          c => `<li><strong>${c.name}</strong>${c.repr ? ": " + c.repr : ""}</li>`
+        );
       }
       if (result.missing_cons_sheet) {
-        html += "<p>No consequences sheet found in file.</p>";
+        html += "<p class='muted'>No consequences sheet found in file.</p>";
       }
       if (result.consequence_errors && result.consequence_errors.length > 0) {
         html += "<p><strong>Consequence errors (import cancelled):</strong></p><ul>";

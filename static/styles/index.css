@@ -294,3 +294,32 @@ dialog::backdrop {
   font-family: monospace;
   font-size: 0.85rem;
 }
+/* ── Import result collapsible sections ─────────────────── */
+.import-detail {
+  margin: 0.3rem 0;
+}
+
+.import-detail summary {
+  cursor: pointer;
+  list-style: disclosure-closed;
+  padding: 0.1rem 0;
+}
+
+.import-detail[open] summary {
+  list-style: disclosure-open;
+  margin-bottom: 0.2rem;
+}
+
+.import-detail ul {
+  margin: 0.2rem 0 0.2rem 1.5rem;
+  padding: 0;
+}
+
+.import-detail li {
+  margin: 0.15rem 0;
+  font-size: 0.9rem;
+}
+
+.import-detail-sub {
+  color: #555;
+}
