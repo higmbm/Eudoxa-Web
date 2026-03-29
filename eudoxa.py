@@ -412,7 +412,7 @@ class EudoxaManager:
         class_list = [sorted(cls) for cls in eq_classes]
         class_list.sort()
         rep   = {tuple(cls): cls[0] for cls in class_list}
-        label = {tuple(cls): " \u223c ".join(cls) for cls in class_list}
+        label = {tuple(cls): f" {EQ} ".join(cls) for cls in class_list}
 
         # Step 2: build graph on equivalence classes
         nxdg = nx.DiGraph()
@@ -1358,7 +1358,7 @@ class EudoxaManager:
         ordered = [(an, vd) for an, asp in self.aspects.items() for vd in asp.vdiffs]
 
         # Corner cell
-        ws.cell(row=3, column=3).value = "\u0394\\\u0394"
+        ws.cell(row=3, column=3).value = f"{DELTA}\\{DELTA}"
 
         # Row 2+3: column headers
         col_index = 4

@@ -381,10 +381,19 @@
     let consFirstName = null;
     let consAspects   = [];
 
+    // Symbol constants from server (window.EUDOXA set by nav.js)
+    const C    = window.EUDOXA || {};
+    const BT   = C.BT   || "≻";
+    const BTE  = C.BTE  || "⪰";
+    const EQ   = C.EQ   || "∼";
+    const WTE  = C.WTE  || "⪯";
+    const WT   = C.WT   || "≺";
+    const EM_DASH = C.EM_DASH || "—";
+
     function relClass(rel) {
-      if (rel === "\u227b" || rel === "\u2ab0") return "rel-better";
-      if (rel === "\u223c")                     return "rel-equal";
-      if (rel === "\u227a" || rel === "\u2aaf") return "rel-worse";
+      if (rel === BT || rel === BTE) return "rel-better";
+      if (rel === EQ)                         return "rel-equal";
+      if (rel === WT || rel === WTE) return "rel-worse";
       return "rel-unset";
     }
 
@@ -394,9 +403,9 @@
       const collsDiv = document.getElementById("consInferenceColls");
       clearTimeout(panel._hideTimer);
       addsDiv.hidden = true; collsDiv.hidden = true;
-      const relLabel = rel === "" ? "\u2014" : rel;
+      const relLabel = rel === "" ? EM_DASH : rel;
       if (colls.length > 0) {
-        collsDiv.innerHTML = `<strong>Relation not set \u2014 collision detected:</strong> ${la} ${relLabel} ${lb}<ul>`
+        collsDiv.innerHTML = `<strong>Relation not set ${EM_DASH} collision detected:</strong> ${la} ${relLabel} ${lb}<ul>`
           + colls.map(s => `<li>${s}</li>`).join("") + "</ul>";
         collsDiv.hidden = false;
       } else {
@@ -497,14 +506,14 @@
         const td  = document.createElement("td");
         if (la === lb) {
           td.className = "rel-diag dom-compare-rel";
-          td.textContent = "\u223c";
+          td.textContent = EQ;
         } else {
           td.className = relClass(rel) + " dom-compare-rel";
           const sel = document.createElement("select");
           sel.className = "rel-select dom-rel-select";
           (optMaps[asp] || []).forEach(opt => {
             const o = document.createElement("option");
-            o.value = opt; o.textContent = opt === "" ? "\u2014" : opt;
+            o.value = opt; o.textContent = opt === "" ? EM_DASH : opt;
             if (opt === rel) o.selected = true;
             sel.appendChild(o);
           });

@@ -1,6 +1,10 @@
-// Fetches aspect names and injects a nav bar above the page's first h1.
+// Fetches constants and aspect names; injects a nav bar above the page's first h1.
 (async function () {
   try {
+    // Fetch and expose symbol constants so all pages can reference them
+    const cRes = await fetch("/api/constants");
+    if (cRes.ok) window.EUDOXA = await cRes.json();
+
     const res = await fetch("/api/aspects");
     if (!res.ok) return;
     const data = await res.json();

@@ -252,6 +252,15 @@
     // ── Level relations matrix ───────────────────────────────────
     let relLevels        = [];
     let relDescriptions  = {};
+    // Symbol constants from server (window.EUDOXA set by nav.js)
+    const C    = window.EUDOXA || {};
+    const BT   = C.BT   || "≻";
+    const BTE  = C.BTE  || "⪰";
+    const EQ   = C.EQ   || "∼";
+    const WTE  = C.WTE  || "⪯";
+    const WT   = C.WT   || "≺";
+    const EM_DASH = C.EM_DASH || "—";
+
     let relOptions       = [];
     let relCells         = {};
 
@@ -286,9 +295,9 @@
     }
 
     function relCellClass(rel) {
-      if (rel === "\u227b" || rel === "\u2ab0") return "rel-better";  // ≻ ⪰
-      if (rel === "\u223c")                       return "rel-equal";   // ∼
-      if (rel === "\u227a" || rel === "\u2aaf") return "rel-worse";   // ≺ ⪯
+      if (rel === BT || rel === BTE) return "rel-better";  // ≻ ⪰
+      if (rel === EQ)                       return "rel-equal";   // ∼
+      if (rel === WT || rel === WTE) return "rel-worse";   // ≺ ⪯
       return "rel-unset";
     }
 
@@ -343,7 +352,7 @@
           const isDiag = la === lb;
           if (isDiag) {
             td.className = "rel-cell rel-diag";
-            td.textContent = "\u223c";   // ∼ (EQ)
+            td.textContent = EQ;   // ∼ (EQ)
           } else {
             const rel = relCells[`${la}|||${lb}`] || "";
             td.className = `rel-cell rel-editable ${relCellClass(rel)}`;
@@ -421,7 +430,7 @@
       addsDiv.hidden  = true;
       collsDiv.hidden = true;
 
-      const relLabel = rel === "" ? "\u2014" : rel;
+      const relLabel = rel === "" ? EM_DASH : rel;
 
       if (colls.length > 0) {
         // Collision — show red box, no additions committed
@@ -564,7 +573,7 @@
 
     function onFirstNodeClick(nodeId) {
       const members = nodeMembers[nodeId] || [];
-      const label   = members.join(" \u223c ");
+      const label   = members.join(` ${EQ} `);
       const labelEl = document.getElementById("graphRelPickerLabelA");
       labelEl.textContent = label;
       labelEl.classList.remove("graph-rel-placeholder");
@@ -578,7 +587,7 @@
     function onSecondNodeClick(nodeAId, nodeBId) {
       const membersA = nodeMembers[nodeAId] || [];
       const membersB = nodeMembers[nodeBId] || [];
-      const labelB   = membersB.join(" \u223c ");
+      const labelB   = membersB.join(` ${EQ} `);
 
       const labelBEl = document.getElementById("graphRelPickerLabelB");
       labelBEl.textContent = labelB;
@@ -593,12 +602,12 @@
       const sel = document.getElementById("graphRelPickerSel");
       sel.innerHTML = "";
       const graphRelOptions = relOptions.filter(
-        r => r === "" || r === "\u227b" || r === "\u2ab0" || r === "\u223c"
+        r => r === "" || r === BT || r === BTE || r === EQ
       );
       for (const rel of graphRelOptions) {
         const opt = document.createElement("option");
         opt.value       = rel;
-        opt.textContent = rel === "" ? "\u2014" : rel;
+        opt.textContent = rel === "" ? EM_DASH : rel;
         if (rel === currentRel) opt.selected = true;
         sel.appendChild(opt);
       }

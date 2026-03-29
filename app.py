@@ -46,6 +46,35 @@ def no_store_html(response):
 # -----------------------------------------------------------
 #  UI
 # -----------------------------------------------------------
+@app.get("/api/constants")
+def get_constants():
+    """Return all symbol constants used in the UI as a JSON object."""
+    return {
+        # VDCM raw values
+        "TRUE":      eudoxa.TRUE,
+        "FALSE":     eudoxa.FALSE,
+        "UNDEFINED": eudoxa.UNDEFINED,
+        # Aspect level relations
+        "BT":        eudoxa.BT,
+        "BTE":       eudoxa.BTE,
+        "EQ":        eudoxa.EQ,
+        "WTE":       eudoxa.WTE,
+        "WT":        eudoxa.WT,
+        "AL_RELATION_OPTIONS": eudoxa.AL_RELATION_OPTIONS,
+        # Vdiff order relations
+        "GT":        eudoxa.GT,
+        "GTE":       eudoxa.GTE,
+        "DEQ":       eudoxa.DEQ,
+        "LTE":       eudoxa.LTE,
+        "LT":        eudoxa.LT,
+        "VDIFF_RELATION_OPTIONS": eudoxa.VDIFF_RELATION_OPTIONS,
+        # Other symbols
+        "DELTA":     eudoxa.DELTA,
+        "EM_DASH":   "—",
+        "ARROW":     "→",
+    }, 200
+
+
 @app.get("/")
 def index():
     return render_template("index.html", project_name=session.get("project_name"))

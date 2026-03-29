@@ -77,18 +77,25 @@
       renderMatrix(data, document.getElementById("matrixWrapper"));
     }
 
-    // Order relation options shown in dropdowns
-    const GT  = "⊐", GTE = "⊒", DEQ = "≜",
-          LTE = "⊑", LT  = "⊏";
-    const TRUE_SYM  = "⊒";   // ⊒  (same as GTE)
-    const FALSE_SYM = "⋓";   // ⋣
+    // Symbol constants — sourced from server via window.EUDOXA (set by nav.js)
+    const C         = window.EUDOXA || {};
+    const GT        = C.GT        || "⊐";
+    const GTE       = C.GTE       || "⊒";
+    const DEQ       = C.DEQ       || "≜";
+    const LTE       = C.LTE       || "⊑";
+    const LT        = C.LT        || "⊏";
+    const TRUE_SYM  = C.TRUE      || "⊒";
+    const FALSE_SYM = C.FALSE     || "⋣";
+    const EM_DASH   = C.EM_DASH   || "—";
+    const DELTA     = C.DELTA     || "Δ";
+
     const ORDER_OPTIONS = [
       { value: GT,  label: GT  },
       { value: GTE, label: GTE },
       { value: DEQ, label: DEQ },
       { value: LTE, label: LTE },
       { value: LT,  label: LT  },
-      { value: "",  label: "—" },
+      { value: "",  label: EM_DASH },
     ];
 
     function showInferencePanel(la, rel, lb, adds, inferredAdds, colls) {
@@ -97,9 +104,9 @@
       const collsDiv = document.getElementById("inferenceColls");
       clearTimeout(panel._hideTimer);
       addsDiv.hidden = true; collsDiv.hidden = true;
-      const relLabel = rel === "" ? "\u2014" : rel;
+      const relLabel = rel === "" ? EM_DASH : rel;
       if (colls.length > 0) {
-        collsDiv.innerHTML = `<strong>Relation not set \u2014 collision detected:</strong> `
+        collsDiv.innerHTML = `<strong>Relation not set ${EM_DASH} collision detected:</strong> `
           + `${la} ${relLabel} ${lb}<ul>`
           + colls.map(s => `<li>${s}</li>`).join("") + "</ul>";
         collsDiv.hidden = false;
@@ -175,7 +182,8 @@
           } else {
             td.className = "vdiff-cell " + orderClass(cell.order_rel);
             function parseLbl(lbl) {
-              const m = lbl.match(/\u0394\((.+),(.+)\)/);
+              const reDelta = new RegExp(DELTA.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\((.+),(.+)\\)');
+              const m = lbl.match(reDelta);
               return m ? [m[1].trim(), m[2].trim()] : ["*", "*"];
             }
             const [l1a, l1b] = parseLbl(rowLbl);
