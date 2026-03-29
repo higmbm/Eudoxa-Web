@@ -508,8 +508,8 @@ def patch_level(aspect_name, level_name):
 @app.get("/api/vdiff-matrix/<an1>/<an2>")
 def get_vdiff_matrix(an1, an2):
     """Return the value-difference comparison sub-matrix for aspect pair (an1, an2).
-    Response: { row_labels, col_labels, cells: [[rel, ...], ...] }
-    where rel is '⊒', '⋣', or '' (undefined).
+    Response: { row_labels, col_labels,
+                cells: [[{order_rel, raw_rel, diagonal}, ...], ...] }
     """
     mgr = load_manager_or_400()
     if an1 not in mgr.aspects:
@@ -517,25 +517,43 @@ def get_vdiff_matrix(an1, an2):
     if an2 not in mgr.aspects:
         return {"error": f"Aspect '{an2}' not found"}, 404
 
-    sub = mgr.vdiff_comparison_matrix.get((an1, an2), {})
+    sub_12 = mgr.vdiff_comparison_matrix.get((an1, an2), {})
+    sub_21 = mgr.vdiff_comparison_matrix.get((an2, an1), {})
 
     def vd_key(vd):
         return eudoxa.ZDIFF_TUPLE if vd.natural_zero() \
                else (str(vd.from_level), str(vd.to_level))
 
+    def derive_order(raw_fwd, raw_bwd):
+        T, F = eudoxa.TRUE, eudoxa.FALSE
+        if raw_fwd == T and raw_bwd == F:  return eudoxa.GT
+        if raw_fwd == T and raw_bwd == T:  return eudoxa.DEQ
+        if raw_fwd == T:                   return eudoxa.GTE
+        if raw_fwd == F and raw_bwd == T:  return eudoxa.LT
+        if raw_bwd == T:                   return eudoxa.LTE
+        if raw_fwd == F:                   return eudoxa.FALSE
+        return eudoxa.UNDEFINED
+
     row_vdiffs = list(mgr.aspects[an1].vdiffs)
     col_vdiffs = list(mgr.aspects[an2].vdiffs)
-
     row_labels = [repr(v) for v in row_vdiffs]
-    col_labels = [repr(v) for v in col_vdiffs]
+    col_labels  = [repr(v) for v in col_vdiffs]
 
-    cells = [
-        [
-            sub.get((vd_key(rv), vd_key(cv)), eudoxa.UNDEFINED)
-            for cv in col_vdiffs
-        ]
-        for rv in row_vdiffs
-    ]
+    cells = []
+    for rv in row_vdiffs:
+        rk = vd_key(rv)
+        row = []
+        for cv in col_vdiffs:
+            ck      = vd_key(cv)
+            raw_fwd = sub_12.get((rk, ck), eudoxa.UNDEFINED)
+            raw_bwd = sub_21.get((ck, rk), eudoxa.UNDEFINED)
+            diag    = (an1 == an2 and rk == ck)
+            row.append({
+                "order_rel": derive_order(raw_fwd, raw_bwd),
+                "raw_rel":   raw_fwd,
+                "diagonal":  diag,
+            })
+        cells.append(row)
 
     return {"row_labels": row_labels, "col_labels": col_labels, "cells": cells}, 200
 

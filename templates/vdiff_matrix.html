@@ -118,12 +118,11 @@
       panel._hideTimer = setTimeout(() => { panel.hidden = true; }, 8000);
     }
 
-    function cellClass(rel) {
-      if (rel === "\u22d2") return "vdiff-true";   // ⊒
-      if (rel === "\u22d3") return "vdiff-false";  // ⋣
+    function orderClass(ord) {
+      if (ord === GT || ord === GTE || ord === DEQ) return "vdiff-true";
+      if (ord === LT || ord === LTE || ord === FALSE_SYM) return "vdiff-false";
       return "vdiff-undef";
     }
-
     function renderMatrix(data, wrapper) {
       if (data.row_labels.length === 0) {
         wrapper.innerHTML = "<p class='muted'>No value differences defined.</p>";
@@ -155,7 +154,7 @@
       const an1 = document.getElementById("selAn1").value;
       const an2 = document.getElementById("selAn2").value;
 
-      // Body rows with dropdowns
+      // Body rows
       const tbody = document.createElement("tbody");
       data.cells.forEach((row, ri) => {
         const tr = document.createElement("tr");
@@ -163,66 +162,55 @@
         th.textContent = data.row_labels[ri];
         th.className = "vdiff-row-header";
         tr.appendChild(th);
-        row.forEach((rel, ci) => {
+
+        row.forEach((cell, ci) => {
           const td = document.createElement("td");
-          const rowLbl = data.row_labels[ri];  // e.g. 'Δ(0,600)'
+          const rowLbl = data.row_labels[ri];
           const colLbl = data.col_labels[ci];
 
-          // Parse 'Δ(a,b)' -> [a, b]
-          function parseLbl(lbl) {
-            const m = lbl.match(/\u0394\((.+),(.+)\)/);
-            return m ? [m[1].trim(), m[2].trim()] : ["*", "*"];
-          }
-          const [l1a, l1b] = parseLbl(rowLbl);
-          const [l2a, l2b] = parseLbl(colLbl);
-
-          // Determine current order relation from TRUE/FALSE pair
-          const rawRel  = rel;         // TRUE='⊒', FALSE='⋣', ''=undefined
-          const rawBack = data.cells[ci]?.[ri] ?? "";  // transpose entry
-          let currentOrder;
-          if (rawRel === TRUE_SYM && rawBack === FALSE_SYM) currentOrder = GT;
-          else if (rawRel === TRUE_SYM && rawBack === TRUE_SYM) currentOrder = DEQ;
-          else if (rawRel === TRUE_SYM) currentOrder = GTE;
-          else if (rawRel === FALSE_SYM && rawBack === TRUE_SYM) currentOrder = LT;
-          else if (rawBack === TRUE_SYM) currentOrder = LTE;
-          else currentOrder = "";
-
-          td.className = "vdiff-cell " + cellClass(rawRel);
-
-          const sel = document.createElement("select");
-          sel.className = "vdiff-select";
-          ORDER_OPTIONS.forEach(opt => {
-            const o = document.createElement("option");
-            o.value = opt.value; o.textContent = opt.label;
-            if (opt.value === currentOrder) o.selected = true;
-            sel.appendChild(o);
-          });
-
-          let currentOrderMemo = currentOrder;
-          sel.addEventListener("change", async () => {
-            const newOrder = sel.value;
-            const url = `/api/vdiff-matrix/${encodeURIComponent(an1)}/${encodeURIComponent(l1a)}/${encodeURIComponent(l1b)}/`
-                      + `${encodeURIComponent(an2)}/${encodeURIComponent(l2a)}/${encodeURIComponent(l2b)}`;
-            const res = await fetch(url, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ relation: newOrder })
-            });
-            const json = await res.json().catch(() => ({}));
-            if (res.ok) {
-              currentOrderMemo = newOrder;
-              showInferencePanel(rowLbl, newOrder, colLbl,
-                json.adds || [], json.inferred_adds || [], []);
-              // Reload matrix to reflect any symmetry updates
-              await loadMatrix();
-            } else {
-              sel.value = currentOrderMemo;
-              showInferencePanel(rowLbl, newOrder, colLbl, [], [],
-                json.colls || [json.error] || []);
+          if (cell.diagonal) {
+            td.className = "vdiff-cell vdiff-diag";
+            td.textContent = DEQ;
+          } else {
+            td.className = "vdiff-cell " + orderClass(cell.order_rel);
+            function parseLbl(lbl) {
+              const m = lbl.match(/\u0394\((.+),(.+)\)/);
+              return m ? [m[1].trim(), m[2].trim()] : ["*", "*"];
             }
-          });
-
-          td.appendChild(sel);
+            const [l1a, l1b] = parseLbl(rowLbl);
+            const [l2a, l2b] = parseLbl(colLbl);
+            const sel = document.createElement("select");
+            sel.className = "vdiff-select";
+            ORDER_OPTIONS.forEach(opt => {
+              const o = document.createElement("option");
+              o.value = opt.value; o.textContent = opt.label;
+              if (opt.value === cell.order_rel) o.selected = true;
+              sel.appendChild(o);
+            });
+            let currentOrder = cell.order_rel;
+            sel.addEventListener("change", async () => {
+              const newOrder = sel.value;
+              const url = `/api/vdiff-matrix/${encodeURIComponent(an1)}/${encodeURIComponent(l1a)}/${encodeURIComponent(l1b)}/`
+                        + `${encodeURIComponent(an2)}/${encodeURIComponent(l2a)}/${encodeURIComponent(l2b)}`;
+              const res = await fetch(url, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ relation: newOrder })
+              });
+              const json = await res.json().catch(() => ({}));
+              if (res.ok) {
+                currentOrder = newOrder;
+                showInferencePanel(rowLbl, newOrder, colLbl,
+                  json.adds || [], json.inferred_adds || [], []);
+                await loadMatrix();
+              } else {
+                sel.value = currentOrder;
+                showInferencePanel(rowLbl, newOrder, colLbl, [], [],
+                  json.colls || [json.error] || []);
+              }
+            });
+            td.appendChild(sel);
+          }
           tr.appendChild(td);
         });
         tbody.appendChild(tr);
