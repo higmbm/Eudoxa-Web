@@ -138,6 +138,7 @@ button.primary:hover {
   background: #d8d8d8 !important;
   color: #888;
   cursor: default;
+  text-align: center;
 }
 
 /* Editable cells */
@@ -152,11 +153,14 @@ button.primary:hover {
 /* Dropdown inside a cell */
 .rel-select {
   font-size: 1rem;
+  font-weight: bold;
   border: none;
   background: transparent;
   cursor: pointer;
   padding: 0;
   width: 100%;
+  text-align: center;
+  text-align-last: center;
 }
 
 /* ── Inference panel ────────────────────────────────────────── */
@@ -308,7 +312,7 @@ button.primary:hover {
 }
 
 .rel-equal {
-  background: #e8f0fe !important;   /* blue tint   — ∼  */
+  background: #fffde7 !important;   /* yellow tint — ∼  */
 }
 
 .rel-worse {
@@ -316,5 +320,5 @@ button.primary:hover {
 }
 
 .rel-unset {
-  background: #fffde7 !important;   /* yellow tint — unset */
+  background: #f8f8f8 !important;   /* off-white   — unset */
 }

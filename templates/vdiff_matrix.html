@@ -119,7 +119,8 @@
     }
 
     function orderClass(ord) {
-      if (ord === GT || ord === GTE || ord === DEQ) return "vdiff-true";
+      if (ord === DEQ)                   return "vdiff-deq";
+      if (ord === GT || ord === GTE)     return "vdiff-true";
       if (ord === LT || ord === LTE || ord === FALSE_SYM) return "vdiff-false";
       return "vdiff-undef";
     }

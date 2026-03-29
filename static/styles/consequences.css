@@ -97,9 +97,9 @@
 
 /* Relation cell colours (mirrors aspect_detail.css) */
 .rel-better { background: #e6f4ea !important; }
-.rel-equal  { background: #e8f0fe !important; }
+.rel-equal  { background: #fffde7 !important; }
 .rel-worse  { background: #fce8e6 !important; }
-.rel-unset  { background: #fffde7 !important; }
+.rel-unset  { background: #f8f8f8 !important; }
 
 /* ── Comparison table relation dropdown ─────────────────── */
 .dom-rel-select {

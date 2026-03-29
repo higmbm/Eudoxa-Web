@@ -59,18 +59,21 @@
 }
 
 /* ── Cell colours ─────────────────────────────────────────── */
-.vdiff-true  { background: #e6f4ea !important; }   /* ⊒ — green  */
+.vdiff-true  { background: #e6f4ea !important; }   /* ⊒ ⊐ — green */
+.vdiff-deq   { background: #fffde7 !important; }   /* ≜  — yellow */
 .vdiff-false { background: #fce8e6 !important; }   /* ⋣ — red    */
-.vdiff-undef { background: #fffde7 !important; }   /* — — yellow */
+.vdiff-undef { background: #f8f8f8 !important; }   /* — — off-white */
 
 /* ── Relation dropdown ───────────────────────────────────── */
 .vdiff-select {
   font-size: 1rem;
+  font-weight: bold;
   width: 100%;
   border: none;
   background: transparent;
   cursor: pointer;
   text-align: center;
+  text-align-last: center;
 }
 
 /* ── Inference panel (mirrors aspect_detail.css) ─────────── */
@@ -99,5 +102,5 @@
   background: #d8d8d8 !important;
   color: #888;
   cursor: default;
-  text-align: center;
+  text-align: center !important;
 }
