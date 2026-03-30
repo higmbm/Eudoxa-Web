@@ -170,6 +170,12 @@ def import_project():
     if not result["success"]:
         return {"import_result": result}, 422
 
+    # Persist project name from |PROJ| tab if provided
+    if result.get("project_name"):
+        session["project_name"] = result["project_name"]
+    if result.get("author"):
+        session["author"] = result["author"]
+
     save_manager(mgr)
     return {"import_result": result}, 200
 
@@ -602,6 +608,8 @@ def export_project():
     from flask import send_file
     mgr = load_manager_or_400()
     try:
+        mgr.project_name = session.get("project_name", "")
+        mgr.author       = session.get("author", "")
         wb  = mgr.export_project_to_workbook()
         buf = io.BytesIO()
         wb.save(buf)

@@ -301,6 +301,29 @@
       const success = result.success;
       importResultEl.className = "import-result" + (success ? "" : " import-result-error");
 
+      // Project metadata from |PROJ| tab
+      if (result.project_name) {
+        html += `<p><strong>Project name:</strong> ${result.project_name}`
+             + (result.author ? ` &mdash; <strong>Author:</strong> ${result.author}` : "")
+             + "</p>";
+      }
+
+      // Missing |ASP| tabs listed in |PROJ| (hard error)
+      if (result.missing_asp_tabs && result.missing_asp_tabs.length > 0) {
+        html += "<p><strong>Import aborted — missing |ASP| tabs for:</strong></p><ul>";
+        result.missing_asp_tabs.forEach(a => { html += `<li>${a}</li>`; });
+        html += "</ul>";
+      }
+
+      // Skipped |ASP| tabs not listed in |PROJ|
+      if (result.skipped_asp_tabs && result.skipped_asp_tabs.length > 0) {
+        html += collapsible(
+          `<strong>Skipped (not in |PROJ| aspect list)</strong>`,
+          result.skipped_asp_tabs,
+          a => `<li>${a}</li>`
+        );
+      }
+
       // Aspects imported — collapsible, each aspect shows levels + relations
       if (result.imported_aspects && result.imported_aspects.length > 0) {
         const n = result.imported_aspects.length;

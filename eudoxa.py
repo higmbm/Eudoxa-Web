@@ -19,6 +19,7 @@ logger.addHandler(console_handler)
 logger.addHandler(file_handler)
 
 
+PROJ = "|PROJ|"
 ASP = "|ASP| "
 CONS = "|CONS|"
 DOM = "|DOM|"
@@ -1235,6 +1236,37 @@ class EudoxaManager:
         wb.save(filename)
         return n_levels
 
+    def reorder_aspects(self, new_order: list) -> None:
+        """Reorder self.aspects to match new_order.
+        new_order must contain exactly the same names as self.aspects.
+        Raises ValueError if they don't match.
+        """
+        existing = set(self.aspects.keys())
+        requested = list(new_order)
+        if set(requested) != existing:
+            missing  = existing - set(requested)
+            extra    = set(requested) - existing
+            msgs = []
+            if missing:  msgs.append(f"missing from new order: {sorted(missing)}")
+            if extra:    msgs.append(f"unknown aspects: {sorted(extra)}")
+            raise ValueError("; ".join(msgs))
+        self.aspects = {name: self.aspects[name] for name in requested}
+
+    def export_proj_tab_to_worksheet(self, ws,
+                                      project_name: str = "",
+                                      author: str = "") -> None:
+        """Write the |PROJ| tab to ws."""
+        ws["A1"] = "EUDOXA"
+        ws["B1"] = "0.1"
+        ws["A2"] = "Project name:"
+        ws["B2"] = project_name
+        ws["A3"] = "Author:"
+        ws["B3"] = author
+        ws["A4"] = "Aspects:"
+        for i, asp_name in enumerate(self.aspects.keys(), start=5):
+            ws.cell(row=i, column=1).value = "-"
+            ws.cell(row=i, column=2).value = asp_name
+
     def export_project_to_workbook(self):
         """Export the full project to a new openpyxl Workbook.
         Writes one |ASP| tab per aspect (levels + relations),
@@ -1244,6 +1276,14 @@ class EudoxaManager:
         import openpyxl
         wb = openpyxl.Workbook()
         wb.remove(wb.active)  # remove the default empty sheet
+
+        # |PROJ| tab first
+        ws_proj = wb.create_sheet(title=PROJ)
+        self.export_proj_tab_to_worksheet(
+            ws_proj,
+            project_name=getattr(self, "project_name", ""),
+            author=getattr(self, "author", "")
+        )
 
         # One |ASP| tab per aspect
         for asp_name, aspect in self.aspects.items():
@@ -1395,6 +1435,33 @@ class EudoxaManager:
         self.export_vdiff_comparison_matrix_to_worksheet(self.vdiff_comparison_matrix, ws)
         wb.save(filename)
                 
+    def import_proj_tab_from_worksheet(self, ws) -> dict:
+        """Parse the |PROJ| tab. Returns:
+        {
+          'project_name': str,
+          'author': str,
+          'aspect_order': [str, ...],   # may be empty if section absent
+        }
+        """
+        result = {"project_name": "", "author": "", "aspect_order": []}
+        in_aspects = False
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            key = str(row[0]).strip() if row[0] is not None else ""
+            val = str(row[1]).strip() if row[1] is not None else ""
+            if key == "Project name:":
+                result["project_name"] = val
+                in_aspects = False
+            elif key == "Author:":
+                result["author"] = val
+                in_aspects = False
+            elif key == "Aspects:":
+                in_aspects = True
+            elif in_aspects and key == "-" and val:
+                result["aspect_order"].append(val)
+            elif key and key != "-":
+                in_aspects = False
+        return result
+
     def import_vdiff_comparison_matrix_from_worksheet(self, ws) -> dict:
         """Import vdiff relations from a |VDCM| worksheet.
 
@@ -1521,8 +1588,12 @@ class EudoxaManager:
         """
         result = {
             "success":              False,
+            "project_name":         "",
+            "author":               "",
             "imported_aspects":     [],
             "aspect_errors":        {},
+            "skipped_asp_tabs":     [],
+            "missing_asp_tabs":     [],
             "closure_collisions":   [],
             "vdcm_adds":            0,
             "vdcm_add_details":     [],
@@ -1538,9 +1609,35 @@ class EudoxaManager:
         else:
             tmp = EudoxaManager()
 
+        # ── Step 0: parse |PROJ| tab if present ────────────────
+        proj_sheet = next((n for n in wb.sheetnames if n == PROJ), None)
+        aspect_order = []   # canonical order from |PROJ|; empty = use tab order
+        if proj_sheet is not None:
+            proj_info = tmp.import_proj_tab_from_worksheet(wb[proj_sheet])
+            result["project_name"] = proj_info["project_name"]
+            result["author"]       = proj_info["author"]
+            aspect_order           = proj_info["aspect_order"]
+            # Check for listed aspects with missing |ASP| tabs
+            available_tabs = {n[len(ASP):] for n in wb.sheetnames
+                              if n.startswith(ASP)}
+            missing_tabs = [a for a in aspect_order if a not in available_tabs]
+            if missing_tabs:
+                result["missing_asp_tabs"] = missing_tabs
+                return result
+            # Note any |ASP| tabs not listed in |PROJ| (will be skipped)
+            result["skipped_asp_tabs"] = [
+                a for a in available_tabs if a not in aspect_order
+            ]
+
         # ── Step 1: aspects, levels, and relations ─────────────────
         prefix = ASP  # '|ASP| '
-        aspect_sheets = [name for name in wb.sheetnames if name.startswith(prefix)]
+        if aspect_order:
+            # Use |PROJ| order; skip tabs not in the list
+            aspect_sheets = [ASP + name for name in aspect_order
+                             if ASP + name in wb.sheetnames]
+        else:
+            aspect_sheets = [name for name in wb.sheetnames
+                             if name.startswith(prefix)]
 
         for sheet_name in aspect_sheets:
             ws = wb[sheet_name]
