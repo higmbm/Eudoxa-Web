@@ -96,9 +96,10 @@ def get_constants():
         "LT":        eudoxa.LT,
         "VDIFF_RELATION_OPTIONS": eudoxa.VDIFF_RELATION_OPTIONS,
         # Other symbols
-        "DELTA":     eudoxa.DELTA,
-        "EM_DASH":   "—",
-        "ARROW":     "→",
+        "DELTA":         eudoxa.DELTA,
+        "ZDIFF_DISPLAY": eudoxa.ZDIFF_DISPLAY,
+        "EM_DASH":       "—",
+        "ARROW":         "→",
     }, 200
 
 
@@ -158,17 +159,11 @@ def rename_project():
 
 @app.get("/api/project")
 def get_project():
-    """Get the project name and serialized EudoxaManager."""
+    """Get the current project name."""
     name = session.get("project_name")
-    serialized_mgr = session.get("manager")
-
-    if not name or not serialized_mgr:
+    if not name:
         return {"error": "No active project"}, 404
-
-    return {
-        "project_name": name,
-        "manager": serialized_mgr
-    }, 200
+    return {"project_name": name}, 200
 
 
 @app.delete("/api/project")

@@ -38,8 +38,9 @@ WT = "≺"
 AL_RELATION_OPTIONS = [UNDEFINED, BT, BTE, EQ, WTE, WT]
 
 DELTA = "Δ"
-ZDIFF_TUPLE = ('*', '*')
-ZDIFF_STR = str(ZDIFF_TUPLE)
+ZDIFF_TUPLE   = ('*', '*')
+ZDIFF_STR     = str(ZDIFF_TUPLE)
+ZDIFF_DISPLAY = "◬"   # U+25EC — used in app views and Excel labels
 
 GT = "⊐"
 GTE = "⊒"
@@ -187,9 +188,9 @@ class VDiff:
         return self.from_level == self.to_level
 
     def __repr__(self):
-        from_level = self.from_level if self.from_level is not None else '*'
-        to_level = self.to_level if self.to_level is not None else '*'
-        return f"Δ({from_level},{to_level})"
+        if self.natural_zero():
+            return ZDIFF_DISPLAY
+        return f"{DELTA}({self.from_level},{self.to_level})"
     
 def str_to_vdiff(aspect_name: str, vdiff_str: str) -> VDiff:
     levels = eval(vdiff_str[1:])
@@ -1192,10 +1193,14 @@ class EudoxaManager:
                         elif vd1.natural_zero() and vd2.natural_zero(): # Both zero?
                             rel = TRUE
                     if not (d1, d2) in vdcm12:
-                        logger.debug(f"Initialising ({d1[0]},{d1[1]})?({d2[0]},{d2[1]}): {rel}")
+                        _l1 = ZDIFF_DISPLAY if d1 == ZDIFF_TUPLE else f"({d1[0]},{d1[1]})"
+                        _l2 = ZDIFF_DISPLAY if d2 == ZDIFF_TUPLE else f"({d2[0]},{d2[1]})"
+                        logger.debug(f"Initialising {_l1}?{_l2}: {rel}")
                         vdcm12[(d1, d2)] = rel
                     if not (d2, d1) in vdcm21:
-                        logger.debug(f"Initialising ({d2[0]},{d2[1]})?({d1[0]},{d1[1]}): {rel}")
+                        _l1 = ZDIFF_DISPLAY if d1 == ZDIFF_TUPLE else f"({d1[0]},{d1[1]})"
+                        _l2 = ZDIFF_DISPLAY if d2 == ZDIFF_TUPLE else f"({d2[0]},{d2[1]})"
+                        logger.debug(f"Initialising {_l2}?{_l1}: {rel}")
                         vdcm21[(d2, d1)] = rel
     
     def compute_consequence_space(self) -> List:
@@ -1383,9 +1388,9 @@ class EudoxaManager:
             row_index += 1
 
     def _vd_label(self, vd):
-        """Return the label for a VDiff used in Excel: '(*,*)' or '(0,600)'."""
+        """Return the label for a VDiff used in Excel and display."""
         if vd.natural_zero():
-            return "(*,*)"
+            return ZDIFF_DISPLAY
         return f"({vd.from_level},{vd.to_level})"
 
     def _vd_key(self, vd):
@@ -1475,7 +1480,11 @@ class EudoxaManager:
         Returns {"adds": [...], "collisions": [...]}.
         """
         def parse_label(lbl):
-            lbl = lbl.strip().strip("()")
+            lbl = lbl.strip()
+            # Accept the display symbol directly
+            if lbl == ZDIFF_DISPLAY:
+                return ZDIFF_TUPLE
+            lbl = lbl.strip("()")
             parts = lbl.split(",", 1)
             if len(parts) != 2:
                 return None

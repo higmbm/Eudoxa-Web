@@ -84,10 +84,11 @@
     const DEQ       = C.DEQ       || "≜";
     const LTE       = C.LTE       || "⊑";
     const LT        = C.LT        || "⊏";
-    const TRUE_SYM  = C.TRUE      || "⊒";
-    const FALSE_SYM = C.FALSE     || "⋣";
-    const EM_DASH   = C.EM_DASH   || "—";
-    const DELTA     = C.DELTA     || "Δ";
+    const TRUE_SYM     = C.TRUE         || "⊒";
+    const FALSE_SYM    = C.FALSE        || "⋣";
+    const EM_DASH      = C.EM_DASH      || "—";
+    const DELTA        = C.DELTA        || "Δ";
+    const ZDIFF_DISPLAY = C.ZDIFF_DISPLAY || "◬";
 
     const ORDER_OPTIONS = [
       { value: GT,  label: GT  },
@@ -182,6 +183,8 @@
           } else {
             td.className = "vdiff-cell " + orderClass(cell.order_rel);
             function parseLbl(lbl) {
+              // Natural zero: Δ◬
+              if (lbl === ZDIFF_DISPLAY) return ["*", "*"];
               const reDelta = new RegExp(DELTA.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\((.+),(.+)\\)');
               const m = lbl.match(reDelta);
               return m ? [m[1].trim(), m[2].trim()] : ["*", "*"];
