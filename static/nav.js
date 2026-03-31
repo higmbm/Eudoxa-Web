@@ -47,16 +47,18 @@
     // Project link
     nav.appendChild(link("/", "Project"));
 
-    // Aspects group
+    // Aspects group: 'Aspects#A1-A2-A3'
     nav.appendChild(sep());
-    nav.appendChild(link("/aspects", "Aspects"));
     if (aspects.length > 0) {
-      nav.appendChild(sep(" ["));
+      const aspLink = link("/aspects", "Aspects");
+      nav.appendChild(aspLink);
+      nav.appendChild(sep(">"));
       aspects.forEach((name, i) => {
-        if (i > 0) nav.appendChild(sep("|"));
+        if (i > 0) nav.appendChild(sep("-"));
         nav.appendChild(link("/aspects/" + encodeURIComponent(name), name));
       });
-      nav.appendChild(sep("]"));
+    } else {
+      nav.appendChild(link("/aspects", "Aspects"));
     }
 
     // Consequences
