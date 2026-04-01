@@ -81,20 +81,51 @@
   margin-top: 0.8rem;
 }
 
-.inference-adds {
-  padding: 0.5rem 1rem;
+/* Coloured border on the panel itself */
+.inference-panel.vdiff-infer-ok {
+  padding: 0.5rem 0.8rem;
   background: #e8f5e9;
   border: 1px solid #81c784;
   border-radius: 6px;
   font-size: 0.9rem;
 }
 
-.inference-colls {
-  padding: 0.5rem 1rem;
+.inference-panel.vdiff-infer-coll {
+  padding: 0.5rem 0.8rem;
   background: #ffebee;
   border: 1px solid #e57373;
   border-radius: 6px;
   font-size: 0.9rem;
+}
+
+.vdiff-infer-heading {
+  margin: 0 0 0.3rem;
+}
+
+.vdiff-infer-detail {
+  margin-bottom: 0.3rem;
+}
+
+.vdiff-infer-detail summary {
+  cursor: pointer;
+  list-style: disclosure-closed;
+  padding: 0.1rem 0;
+  font-weight: 600;
+}
+
+.vdiff-infer-detail[open] summary {
+  list-style: disclosure-open;
+  margin-bottom: 0.2rem;
+}
+
+.vdiff-infer-detail ul {
+  margin: 0.2rem 0 0.2rem 1.5rem;
+  padding: 0;
+}
+
+.vdiff-infer-detail li {
+  margin: 0.15rem 0;
+  font-family: monospace;
 }
 
 /* ── Diagonal cell ───────────────────────────────────────── */

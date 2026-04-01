@@ -191,12 +191,6 @@ class VDiff:
             return ZDIFF_DISPLAY
         return f"{DELTA}({self.from_level},{self.to_level})"
     
-def str_to_vdiff(aspect_name: str, vdiff_str: str) -> VDiff:
-    levels = eval(vdiff_str[1:])
-    if levels[0] == '*' and levels[1] == '*':
-        return VDiff(aspect_name, None, None)
-    return VDiff(aspect_name, levels[0], levels[1])
-
 def str_to_type(data_type_str: str) -> Type:
     if data_type_str == 'int':
         return int
@@ -327,6 +321,8 @@ class EudoxaManager:
 
     def add_aspect(self, name: str, data_type_str: str, description = None) -> Aspect:
         logger.info(f"Adding aspect '{name}'")
+        if '|' in str(name):
+            raise ValueError(f"Aspect name '{name}' may not contain '|'.")
         if name in self.aspects:
             raise ValueError(f"Aspect '{name}' already exists.")
         self.vdiff_comparison_matrix[(name, name)] = {}
@@ -1478,7 +1474,7 @@ class EudoxaManager:
 
         Layout matches export_vdiff_comparison_matrix_to_worksheet:
           Row 2: aspect name column headers
-          Row 3: vdiff label column headers ('(*,*)' or '(0,600)')
+          Row 3: vdiff label column headers ('◬' or '(0,600)')
           Col B: aspect name row headers
           Col C: vdiff label row headers
           Cells D4+: relation values (TRUE='⋒', FALSE='⋓', or empty)
@@ -1487,7 +1483,6 @@ class EudoxaManager:
         """
         def parse_label(lbl):
             lbl = lbl.strip()
-            # Accept the display symbol directly
             if lbl == ZDIFF_DISPLAY:
                 return ZDIFF_TUPLE
             lbl = lbl.strip("()")
@@ -1495,7 +1490,7 @@ class EudoxaManager:
             if len(parts) != 2:
                 return None
             a, b = parts[0].strip(), parts[1].strip()
-            return ZDIFF_TUPLE if (a == "*" and b == "*") else (a, b)
+            return (a, b)
 
         # Parse column headers (row 3, from col D)
         col_headers = []   # [(aspect_name, vd_key_tuple), ...]

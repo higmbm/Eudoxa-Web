@@ -512,6 +512,7 @@
         const description = document.getElementById("inputAspectDesc").value.trim() || null;
 
         if (!name) { alert("Aspect name must be non-empty."); return; }
+        if (name.includes("|")) { alert("Aspect name may not contain '|'."); return; }
 
         const res = await fetch("/api/aspects", {
           method: "POST",

@@ -108,10 +108,7 @@
     </div>
   </div>
 
-  <div id="inferencePanel" class="inference-panel" hidden>
-    <div id="inferenceAdds"  class="inference-adds"  hidden></div>
-    <div id="inferenceColls" class="inference-colls" hidden></div>
-  </div>
+  <div id="inferencePanel" class="inference-panel" hidden></div>
 
   <div id="relationsWrapper" class="relations-wrapper">
     <p class="muted" id="relationsPlaceholder">Loading...</p>
@@ -421,42 +418,33 @@
     }
 
     // ── Inference panel ──────────────────────────────────────────
+    function collapsible(summary, items) {
+      if (!items || items.length === 0) return "";
+      return `<details class="asp-infer-detail">`
+           + `<summary>${summary} (${items.length})</summary>`
+           + `<ul>${items.map(s => `<li>${s}</li>`).join("")}</ul>`
+           + `</details>`;
+    }
+
     function showInferencePanel(la, rel, lb, adds, inferredAdds, colls) {
-      const panel    = document.getElementById("inferencePanel");
-      const addsDiv  = document.getElementById("inferenceAdds");
-      const collsDiv = document.getElementById("inferenceColls");
-
-      clearTimeout(panel._hideTimer);
-      addsDiv.hidden  = true;
-      collsDiv.hidden = true;
-
+      const panel = document.getElementById("inferencePanel");
       const relLabel = rel === "" ? EM_DASH : rel;
-
+      let inner = "";
       if (colls.length > 0) {
-        // Collision — show red box, no additions committed
-        collsDiv.innerHTML =
-          `<strong>Relation not set — collision detected:</strong> ${la} ${relLabel} ${lb}<ul>`
-          + colls.map(s => `<li>${s}</li>`).join("")
-          + "</ul>";
-        collsDiv.hidden = false;
+        inner += `<p class="asp-infer-heading"><strong>Relation not set — collision:</strong> `
+              + `${la} ${relLabel} ${lb}</p>`;
+        inner += collapsible("Collisions", colls);
+        panel.className = "inference-panel asp-infer-coll";
       } else {
-        // Success — show green box with direct and inferred additions
         const verb = rel === "" ? "unset" : "set";
-        let html = `<strong>Relation ${verb}:</strong> ${la} ${relLabel} ${lb}`;
-        if (adds.length > 0) {
-          html += "<br><strong>Added to matrix:</strong><ul>"
-            + adds.map(s => `<li>${s}</li>`).join("") + "</ul>";
-        }
-        if (inferredAdds.length > 0) {
-          html += "<br><strong>Inferred in closure:</strong><ul>"
-            + inferredAdds.map(s => `<li>${s}</li>`).join("") + "</ul>";
-        }
-        addsDiv.innerHTML = html;
-        addsDiv.hidden = false;
+        inner += `<p class="asp-infer-heading"><strong>Relation ${verb}:</strong> `
+              + `${la} ${relLabel} ${lb}</p>`;
+        inner += collapsible("Added to matrix", adds);
+        inner += collapsible("Inferred in closure", inferredAdds);
+        panel.className = "inference-panel asp-infer-ok";
       }
-
+      panel.innerHTML = inner;
       panel.hidden = false;
-      panel._hideTimer = setTimeout(() => { panel.hidden = true; }, 8000);
     }
 
 

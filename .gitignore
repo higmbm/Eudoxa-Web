@@ -5,3 +5,4 @@ venv
 __pycache__
 /eudoxa.log
 /.manager_store/
+/CONTEXT.md

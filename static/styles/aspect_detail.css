@@ -167,38 +167,50 @@ button.primary:hover {
 .inference-panel {
   max-width: 100%;
   margin-top: 0.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.inference-adds,
-.inference-colls {
   padding: 0.55rem 0.9rem;
   border-radius: 6px;
   font-size: 0.9rem;
 }
 
-.inference-adds {
+.inference-panel.asp-infer-ok {
   background: #d4edda;
   border: 1px solid #7cb97c;
   color: #1a4d2a;
 }
 
-.inference-colls {
+.inference-panel.asp-infer-coll {
   background: #fde8e8;
   border: 1px solid #e07070;
   color: #7a1a1a;
 }
 
-.inference-adds ul,
-.inference-colls ul {
-  margin: 0.3rem 0 0 0;
-  padding-left: 1.4rem;
+.asp-infer-heading {
+  margin: 0 0 0.3rem;
 }
 
-.inference-adds li,
-.inference-colls li {
+.asp-infer-detail {
+  margin-bottom: 0.3rem;
+}
+
+.asp-infer-detail summary {
+  cursor: pointer;
+  list-style: disclosure-closed;
+  padding: 0.1rem 0;
+  font-weight: 600;
+}
+
+.asp-infer-detail[open] summary {
+  list-style: disclosure-open;
+  margin-bottom: 0.2rem;
+}
+
+.asp-infer-detail ul {
+  margin: 0.2rem 0 0.2rem 1.5rem;
+  padding: 0;
+}
+
+.asp-infer-detail li {
+  margin: 0.15rem 0;
   font-family: monospace;
   font-size: 0.85rem;
 }

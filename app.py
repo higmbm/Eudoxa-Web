@@ -35,6 +35,18 @@ def save_manager(mgr: EudoxaManager):
     session["manager"] = mgr.to_dict()
 
 
+@app.get("/favicon.ico")
+def favicon():
+    """Return a minimal SVG favicon to silence 404 console noise."""
+    from flask import Response
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+           '<circle cx="16" cy="16" r="14" fill="#0b5cff"/>'
+           '<text x="16" y="22" font-size="18" font-family="sans-serif" '
+           'text-anchor="middle" fill="white">E</text></svg>')
+    return Response(svg, mimetype="image/svg+xml",
+                    headers={"Cache-Control": "max-age=86400"})
+
+
 @app.after_request
 def no_store_html(response):
     """Prevent HTML pages from being served from bfcache on back-navigation."""
