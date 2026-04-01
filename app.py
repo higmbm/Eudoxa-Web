@@ -14,76 +14,25 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------
 app.secret_key = os.getenv("SECRET_KEY") or "dev-secret-change-me"
 
-# Store manager data server-side to avoid Flask's 4 KB cookie limit.
-_STORE_DIR = os.getenv("MANAGER_STORE_DIR") or os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), ".manager_store"
-)
-os.makedirs(_STORE_DIR, exist_ok=True)
-
-# Option B: delete store files older than this many days on startup.
-_STORE_MAX_AGE_DAYS = int(os.getenv("MANAGER_STORE_MAX_AGE_DAYS") or "7")
-
-def _cleanup_old_store_files():
-    import time
-    cutoff = time.time() - _STORE_MAX_AGE_DAYS * 86400
-    removed = 0
-    for fname in os.listdir(_STORE_DIR):
-        if not fname.endswith(".json"):
-            continue
-        path = os.path.join(_STORE_DIR, fname)
-        try:
-            if os.path.getmtime(path) < cutoff:
-                os.remove(path)
-                removed += 1
-        except OSError:
-            pass
-    if removed:
-        logger.info(f"Cleaned up {removed} expired manager store file(s)")
-
-_cleanup_old_store_files()
-
 
 # -----------------------------------------------------------
 #  HELPERS
 # -----------------------------------------------------------
-def _store_path(sid: str) -> str:
-    """Return the file path for a session's manager store."""
-    safe = "".join(c for c in sid if c in "0123456789abcdef")
-    return os.path.join(_STORE_DIR, safe + ".json")
-
-
-def _get_sid() -> str:
-    """Return the current session's store ID, creating one if needed."""
-    import uuid
-    if "sid" not in session:
-        session["sid"] = uuid.uuid4().hex
-    return session["sid"]
-
-
 def load_manager_or_400():
-    """Load EudoxaManager from the server-side store, or abort 400."""
-    import json
-    sid = session.get("sid")
-    if not sid:
+    """Load EudoxaManager from the session, or abort 400 if no active project."""
+    serialized_mgr = session.get("manager")
+    if not serialized_mgr:
         abort(400, description="No active project")
     try:
-        with open(_store_path(sid), "r", encoding="utf-8") as f:
-            return EudoxaManager.from_dict(json.load(f))
-    except FileNotFoundError:
-        # Option C: store file gone (expired/deleted) — clear the stale session
-        session.clear()
-        abort(400, description="No active project")
+        return EudoxaManager.from_dict(serialized_mgr)
     except Exception:
-        logger.exception("Failed to deserialize EudoxaManager")
+        logger.exception("Failed to deserialize EudoxaManager from session")
         abort(400, description="Failed to load project data")
 
 
 def save_manager(mgr: EudoxaManager):
-    """Persist the manager to the server-side store."""
-    import json
-    sid = _get_sid()
-    with open(_store_path(sid), "w", encoding="utf-8") as f:
-        json.dump(mgr.to_dict(), f, ensure_ascii=False)
+    """Save the manager to the session."""
+    session["manager"] = mgr.to_dict()
 
 
 @app.after_request
@@ -120,18 +69,15 @@ def get_constants():
         "LT":        eudoxa.LT,
         "VDIFF_RELATION_OPTIONS": eudoxa.VDIFF_RELATION_OPTIONS,
         # Other symbols
-        "DELTA":         eudoxa.DELTA,
-        "ZDIFF_DISPLAY": eudoxa.ZDIFF_DISPLAY,
-        "EM_DASH":       "—",
-        "ARROW":         "→",
+        "DELTA":     eudoxa.DELTA,
+        "EM_DASH":   "—",
+        "ARROW":     "→",
     }, 200
 
 
 @app.get("/")
 def index():
-    return render_template("index.html",
-                           project_name=session.get("project_name"),
-                           author=session.get("author", ""))
+    return render_template("index.html", project_name=session.get("project_name"))
 
 # -----------------------------------------------------------
 #  REST: PROJECT
@@ -151,11 +97,7 @@ def create_project():
 
     mgr = EudoxaManager()
 
-    _get_sid()  # allocate store ID before first save
     session["project_name"] = name
-    author = (data.get("author") or "").strip()
-    if author:
-        session["author"] = author
     save_manager(mgr)
 
     return {"message": "Project created", "project_name": name}, 201
@@ -173,31 +115,29 @@ def rename_project():
         return {"error": "Project name must be non-empty."}, 400
 
     session["project_name"] = name
-    author = (data.get("author") or "").strip()
-    if author:
-        session["author"] = author
-    elif "author" in data:
-        session.pop("author", None)
 
     return {"message": "Project renamed", "project_name": name}, 200
 
 @app.get("/api/project")
 def get_project():
-    """Get the current project name."""
+    """Get the project name and serialized EudoxaManager."""
     name = session.get("project_name")
-    if not name:
+    serialized_mgr = session.get("manager")
+
+    if not name or not serialized_mgr:
         return {"error": "No active project"}, 404
-    return {"project_name": name}, 200
+
+    return {
+        "project_name": name,
+        "manager": serialized_mgr
+    }, 200
 
 
 @app.delete("/api/project")
 def delete_project():
     """Delete the project and manager from the session."""
-    sid = session.get("sid")
-    session.clear()
-    if sid:
-        try: os.remove(_store_path(sid))
-        except FileNotFoundError: pass
+    session.pop("project_name", None)
+    session.pop("manager", None)
     return "", 204
 
 
@@ -738,7 +678,8 @@ def patch_vdiff_relation(an1, l1a, l1b, an2, l2a, l2b):
             origin_str = f"{origin_type}({_fmt_tokens(origin_detail)})"
         return f"{origin_str} \u2192 {_fmt_tokens(result_items)}"
 
-    def _fmt_coll(coll):
+    def _fmt_coll(entry):
+        _, _, coll = entry  # entry is [origin_type, origin_detail, coll]
         vd1_c, old_rel, vd2_c, new_rel_c = coll
         return (f"{repr(vd1_c)} {new_rel_c or '\u2014'} {repr(vd2_c)} "
                 f"conflicts with existing {repr(vd1_c)} {old_rel} {repr(vd2_c)}")

@@ -38,8 +38,7 @@ WT = "≺"
 AL_RELATION_OPTIONS = [UNDEFINED, BT, BTE, EQ, WTE, WT]
 
 DELTA = "Δ"
-ZDIFF_TUPLE   = ('*', '*')
-ZDIFF_STR     = str(ZDIFF_TUPLE)
+ZDIFF_TUPLE   = (None, None)  # internal key for natural zero-diffs
 ZDIFF_DISPLAY = "◬"   # U+25EC — used in app views and Excel labels
 
 GT = "⊐"
@@ -218,24 +217,16 @@ def get_vdiff_relation(vdcm, vd1: VDiff, vd2: VDiff) -> str:
     an1 = vd1.aspect_name
     an2 = vd2.aspect_name
     vdc12 = vdcm[(an1, an2)]
-    d1 = (vd1.from_level, vd1.to_level)
-    if vd1.natural_zero():
-        d1 = ZDIFF_TUPLE
-    d2 = (vd2.from_level, vd2.to_level)
-    if vd2.natural_zero():
-        d2 = ZDIFF_TUPLE
+    d1 = ZDIFF_TUPLE if vd1.from_level == vd1.to_level else (vd1.from_level, vd1.to_level)
+    d2 = ZDIFF_TUPLE if vd2.from_level == vd2.to_level else (vd2.from_level, vd2.to_level)
     return vdc12[(d1, d2)]
 
 def set_vdiff_relation(vdcm, vd1: VDiff, vd2: VDiff, new_rel: str) -> Tuple:
     an1 = vd1.aspect_name
     an2 = vd2.aspect_name
     vdc12 = vdcm[(an1, an2)]
-    d1 = (vd1.from_level, vd1.to_level)
-    if vd1.natural_zero():
-        d1 = ZDIFF_TUPLE
-    d2 = (vd2.from_level, vd2.to_level)
-    if vd2.natural_zero():
-        d2 = ZDIFF_TUPLE
+    d1 = ZDIFF_TUPLE if vd1.from_level == vd1.to_level else (vd1.from_level, vd1.to_level)
+    d2 = ZDIFF_TUPLE if vd2.from_level == vd2.to_level else (vd2.from_level, vd2.to_level)
     old_rel = vdc12[(d1, d2)]
     add, coll = None, None
     if new_rel == old_rel:      # Same relation — no change
@@ -254,7 +245,7 @@ def pos(vd: VDiff, aspect: Aspect, vdcm) -> bool:
     an = aspect.name
     for vd2 in aspect.vdiffs:
         if vd2.natural_zero():
-            d = (str(vd.from_level), str(vd.to_level))
+            d = (vd.from_level, vd.to_level)
             z = ZDIFF_TUPLE
             rel_dz = vdcm[(an, an)][(d, z)]
             rel_zd = vdcm[(an, an)][(z, d)]
@@ -266,7 +257,7 @@ def non_neg(vd: VDiff, aspect: Aspect, vdcm) -> bool:
     an = aspect.name
     for vd2 in aspect.vdiffs:
         if vd2.natural_zero():
-            d = (str(vd.from_level), str(vd.to_level))
+            d = (vd.from_level, vd.to_level)
             z = ZDIFF_TUPLE
             rel_dz = vdcm[(an, an)][(d, z)]
             if (rel_dz == TRUE):
@@ -279,7 +270,7 @@ def zero(vd: VDiff, aspect: Aspect, vdcm) -> bool:
     an = aspect.name
     for vd2 in aspect.vdiffs:
         if vd2.natural_zero():
-            d = (str(vd.from_level), str(vd.to_level))
+            d = (vd.from_level, vd.to_level)
             z = ZDIFF_TUPLE
             rel_dz = vdcm[(an, an)][(d, z)]
             rel_zd = vdcm[(an, an)][(z, d)]
@@ -291,7 +282,7 @@ def non_pos(vd: VDiff, aspect: Aspect, vdcm) -> bool:
     an = aspect.name
     for vd2 in aspect.vdiffs:
         if vd2.natural_zero():
-            d = (str(vd.from_level), str(vd.to_level))
+            d = (vd.from_level, vd.to_level)
             z = ZDIFF_TUPLE
             rel_zd = vdcm[(an, an)][(z, d)]
             if (rel_zd == TRUE):
@@ -302,7 +293,7 @@ def neg(vd: VDiff, aspect: Aspect, vdcm) -> bool:
     an = aspect.name
     for vd2 in aspect.vdiffs:
         if vd2.natural_zero():
-            d = (str(vd.from_level), str(vd.to_level))
+            d = (vd.from_level, vd.to_level)
             z = ZDIFF_TUPLE
             rel_dz = vdcm[(an, an)][(d, z)]
             rel_zd = vdcm[(an, an)][(z, d)]
@@ -1394,9 +1385,11 @@ class EudoxaManager:
         return f"({vd.from_level},{vd.to_level})"
 
     def _vd_key(self, vd):
-        """Return the dict key tuple for a VDiff."""
-        return ZDIFF_TUPLE if vd.natural_zero() \
-               else (str(vd.from_level), str(vd.to_level))
+        """Return the dict key tuple for a VDiff.
+        Same-level diffs (including None,None) all map to ZDIFF_TUPLE."""
+        if vd.from_level == vd.to_level:
+            return ZDIFF_TUPLE
+        return (vd.from_level, vd.to_level)
 
     def export_vdiff_comparison_matrix_to_worksheet(self, vdcm, ws):
         """Write the full vdiff comparison matrix to a worksheet."""
@@ -1415,8 +1408,11 @@ class EudoxaManager:
 
         # Row 4+: row headers and cell values
         ordered = [(an, vd) for an, asp in self.aspects.items() for vd in asp.vdiffs]
+        prev_an1 = None
         for row_index, (an1, vd1) in enumerate(ordered, start=4):
-            ws.cell(row=row_index, column=2).value = an1
+            if an1 != prev_an1:
+                ws.cell(row=row_index, column=2).value = an1
+                prev_an1 = an1
             ws.cell(row=row_index, column=3).value = self._vd_label(vd1)
             for col_offset, (an2, vd2) in enumerate(ordered):
                 rel = self.vdiff_comparison_matrix.get((an1, an2), {}).get(
@@ -1512,16 +1508,20 @@ class EudoxaManager:
         collisions = []
 
         # Parse data rows (row 4 onwards)
+        # col B has aspect name only on first row of each block — track it
+        current_row_asp = None
         row = 4
         while True:
             row_asp = ws.cell(row=row, column=2).value
             row_lbl = ws.cell(row=row, column=3).value
             if row_asp is None and row_lbl is None:
                 break
-            if row_asp is None or row_lbl is None:
+            if row_asp is not None:
+                current_row_asp = str(row_asp).strip()
+            if row_lbl is None or current_row_asp is None:
                 row += 1
                 continue
-            an1 = str(row_asp).strip()
+            an1 = current_row_asp
             d1  = parse_label(str(row_lbl).strip())
             if d1 is None or an1 not in self.aspects:
                 row += 1
@@ -1881,8 +1881,8 @@ class EudoxaManager:
             key = f"{a1}|||{a2}"
             vdcm_out[key] = {}
             for (d1, d2), rel in relation_map.items():
-                d1s = f"{d1[0]}::{d1[1]}"
-                d2s = f"{d2[0]}::{d2[1]}"
+                d1s = f"{d1[0] if d1[0] is not None else ''}::{d1[1] if d1[1] is not None else ''}"
+                d2s = f"{d2[0] if d2[0] is not None else ''}::{d2[1] if d2[1] is not None else ''}"
                 pair_key = f"{d1s}>>{d2s}"
                 vdcm_out[key][pair_key] = rel
     
