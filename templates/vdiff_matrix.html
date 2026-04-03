@@ -28,6 +28,7 @@
   <section class="section" id="matrixSection" hidden>
     <div class="section-header">
       <h2 id="matrixTitle"></h2>
+      <button id="btnToggleNeg" class="btn-toggle-neg">Hide negative</button>
     </div>
     <div id="matrixWrapper"></div>
     <div id="inferencePanel" class="inference-panel" hidden></div>
@@ -45,26 +46,67 @@
     // Auto-load on page open with first aspect pair
     if (ASPECT_NAMES.length > 0) loadMatrix();
 
+    let hideNegative = false;
+    let currentClassification = { non_negative: [], negative: [], undecided: [] };
+
+    document.getElementById("btnToggleNeg").addEventListener("click", () => {
+      hideNegative = !hideNegative;
+      document.getElementById("btnToggleNeg").textContent =
+        hideNegative ? "Show negative" : "Hide negative";
+      applyNegativeFilter();
+    });
+    
     async function loadMatrix() {
-      const [an1, an2] = selPair.value.split("|");
+        const [an1, an2] = selPair.value.split("|");
 
-      const res = await fetch(
-        `/api/vdiff-matrix/${encodeURIComponent(an1)}/${encodeURIComponent(an2)}`
-      );
-      if (!res.ok) {
-        document.getElementById("matrixWrapper").innerHTML =
-          "<p class='error'>Could not load matrix.</p>";
+        const [matRes, cls1Res, cls2Res] = await Promise.all([
+          fetch(`/api/vdiff-matrix/${encodeURIComponent(an1)}/${encodeURIComponent(an2)}`),
+          fetch(`/api/aspects/${encodeURIComponent(an1)}/vdiff-classification`),
+          fetch(`/api/aspects/${encodeURIComponent(an2)}/vdiff-classification`),
+        ]);
+
+        if (!matRes.ok) {
+          document.getElementById("matrixWrapper").innerHTML =
+            "<p class='error'>Could not load matrix.</p>";
+          document.getElementById("matrixSection").hidden = false;
+          return;
+        }
+        const data = await matRes.json();
+
+        // Merge classifications: negative in either aspect counts as negative
+        const cls1 = cls1Res.ok ? await cls1Res.json() : {};
+        const cls2 = cls2Res.ok ? await cls2Res.json() : {};
+        currentClassification = {
+          negative: [...(cls1.negative || []), ...(cls2.negative || [])],
+        };
+
+        document.getElementById("matrixTitle").textContent = `Δ(${an1}) vs Δ(${an2})`;
         document.getElementById("matrixSection").hidden = false;
-        return;
+
+        renderMatrix(data, document.getElementById("matrixWrapper"));
+        applyNegativeFilter();
       }
-      const data = await res.json();
+    
+    function applyNegativeFilter() {
+        const negSet = new Set(currentClassification.negative || []);
+        const table  = document.querySelector("#matrixWrapper .vdiff-table");
+        if (!table) return;
 
-      document.getElementById("matrixTitle").textContent =
-        `Δ(${an1}) vs Δ(${an2})`;
-      document.getElementById("matrixSection").hidden = false;
+        const colHeaders = table.querySelectorAll("thead th.vdiff-col-header");
+        colHeaders.forEach((th, ci) => {
+          const hide = hideNegative && negSet.has(th.textContent.trim());
+          // ci+1 because column 0 is the row-header column
+          table.querySelectorAll(`tr td:nth-child(${ci + 2}), tr th:nth-child(${ci + 2})`)
+               .forEach(cell => cell.hidden = hide);
+          th.hidden = hide;
+        });
 
-      renderMatrix(data, document.getElementById("matrixWrapper"));
-    }
+        table.querySelectorAll("tbody tr").forEach(tr => {
+          const rowHeader = tr.querySelector("th.vdiff-row-header");
+          if (!rowHeader) return;
+          tr.hidden = hideNegative && negSet.has(rowHeader.textContent.trim());
+        });
+      }
 
     // Symbol constants — sourced from server via window.EUDOXA (set by nav.js)
     const C         = window.EUDOXA || {};

@@ -639,6 +639,34 @@ def export_project():
         logger.exception("Failed to export project")
         return {"error": f"Export failed: {e}"}, 500
 
+@app.get("/api/aspects/<aspect_name>/vdiff-classification")
+def get_vdiff_classification(aspect_name):
+    """Return VDiffs for the given aspect classified into three buckets.
+    Query param: closure=1 to classify based on the VDCM closure (default: 0).
+    Response: { "non_negative": [...], "negative": [...], "undecided": [...] }
+    Each list contains VDiff label strings in canonical order.
+    """
+    mgr = load_manager_or_400()
+    asp = mgr.aspects.get(aspect_name)
+    if not asp:
+        return {"error": f"Aspect '{aspect_name}' not found"}, 404
+
+    use_closure = request.args.get("closure", "0") != "0"
+
+    if use_closure:
+        closure_vdcm, _, colls = mgr.closure()
+        if colls:
+            return {"error": "Closure computation produced collisions"}, 409
+        vdcm = closure_vdcm
+    else:
+        vdcm = mgr.vdiff_comparison_matrix
+
+    classified = eudoxa.classify_vdiffs(asp, vdcm)
+
+    return {
+        key: [repr(vd) for vd in vdiffs]
+        for key, vdiffs in classified.items()
+    }, 200
 
 @app.patch("/api/vdiff-matrix/<an1>/<l1a>/<l1b>/<an2>/<l2a>/<l2b>")
 def patch_vdiff_relation(an1, l1a, l1b, an2, l2a, l2b):

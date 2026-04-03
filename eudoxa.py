@@ -248,15 +248,13 @@ def pos(vd: VDiff, aspect: Aspect, vdcm) -> bool:
     return False
 
 def non_neg(vd: VDiff, aspect: Aspect, vdcm) -> bool:
+    """Δ(X,Y) ⊒ ◬  — i.e. the forward TRUE relation to zero exists."""
+    if vd.natural_zero():
+        return True   # ◬ ⊒ ◬ by definition
     an = aspect.name
-    for vd2 in aspect.vdiffs:
-        if vd2.natural_zero():
-            d = (vd.from_level, vd.to_level)
-            z = ZDIFF_TUPLE
-            rel_dz = vdcm[(an, an)][(d, z)]
-            if (rel_dz == TRUE):
-                return True
-    return False
+    d = (vd.from_level, vd.to_level)
+    z = ZDIFF_TUPLE
+    return vdcm[(an, an)][(d, z)] == TRUE
 
 def zero(vd: VDiff, aspect: Aspect, vdcm) -> bool:
     if vd.natural_zero():
@@ -284,17 +282,32 @@ def non_pos(vd: VDiff, aspect: Aspect, vdcm) -> bool:
     return False
 
 def neg(vd: VDiff, aspect: Aspect, vdcm) -> bool:
+    """Δ(X,Y) ⋣ ◬  — i.e. the forward FALSE relation to zero."""
+    if vd.natural_zero():
+        return False  # ◬ is never negative
     an = aspect.name
-    for vd2 in aspect.vdiffs:
-        if vd2.natural_zero():
-            d = (vd.from_level, vd.to_level)
-            z = ZDIFF_TUPLE
-            rel_dz = vdcm[(an, an)][(d, z)]
-            rel_zd = vdcm[(an, an)][(z, d)]
-            if (rel_dz == FALSE and rel_zd == TRUE):
-                return True
-    return False
+    d = (vd.from_level, vd.to_level)
+    z = ZDIFF_TUPLE
+    return vdcm[(an, an)][(d, z)] == FALSE
 
+def classify_vdiffs(asp: Aspect, vdcm) -> dict:
+    """
+    Classify all VDiffs for the given aspect into three mutually exclusive buckets:
+      'non_negative': Δ(X,Y) ⊒ ◬
+      'negative':     Δ(X,Y) ⋣ ◬
+      'undecided':    no relation to ◬ set
+    Returns a dict with those three keys, each mapping to a list of VDiff objects
+    in asp.vdiffs order (natural zero-diff first, then by level insertion order).
+    """
+    result = {"non_negative": [], "negative": [], "undecided": []}
+    for vd in asp.vdiffs:
+        if non_neg(vd, asp, vdcm):
+            result["non_negative"].append(vd)
+        elif neg(vd, asp, vdcm):
+            result["negative"].append(vd)
+        else:
+            result["undecided"].append(vd)
+    return result
 
 def app_ac(origin: List, ac: Tuple, adds: List, colls: List) -> Tuple:
     (add, coll) = ac

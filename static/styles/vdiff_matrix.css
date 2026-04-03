@@ -135,3 +135,19 @@
   cursor: default;
   text-align: center !important;
 }
+
+/* ── Section header (title + toggle button) ──────────────── */
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.section-header h2 {
+  margin: 0;
+}
+
+.btn-toggle-neg {
+  white-space: nowrap;
+}
