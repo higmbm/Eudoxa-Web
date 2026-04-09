@@ -29,17 +29,101 @@
     <div class="section-header">
       <h2 id="matrixTitle"></h2>
       <button id="btnToggleNeg" class="btn-toggle-neg">Hide negative</button>
+      <button id="btnApply"   class="primary" disabled>Apply changes</button>
+      <button id="btnDiscard"               disabled>Discard changes</button>
     </div>
-    <div id="matrixWrapper"></div>
+    <div id="progressBar" class="progress-bar" hidden><div class="progress-bar-fill"></div></div>
     <div id="inferencePanel" class="inference-panel" hidden></div>
+    <div id="matrixWrapper"></div>
   </section>
 
   <script>
     const ASPECT_NAMES = {{ aspect_names | tojson }};
 
-    const selPair = document.getElementById("selPair");
-    selPair.addEventListener("change", () => {
+    const selPair    = document.getElementById("selPair");
+    const btnApply   = document.getElementById("btnApply");
+    const btnDiscard = document.getElementById("btnDiscard");
+
+    // ── Pending changes ────────────────────────────────────────────────────
+    // Maps cellKey → { an1, l1a, l1b, an2, l2a, l2b, newOrder, originalOrder, sel }
+    // cellKey: "${an1}|${l1a}|${l1b}|${an2}|${l2a}|${l2b}"
+    const pendingChanges = new Map();
+
+    function updateBatchButtons() {
+      const hasPending = pendingChanges.size > 0;
+      btnApply.disabled   = !hasPending;
+      btnDiscard.disabled = !hasPending;
+    }
+
+    function discardPendingChanges() {
+      pendingChanges.forEach(p => {
+        p.sel.value = p.originalOrder;
+        p.sel.classList.remove("vdiff-pending");
+      });
+      pendingChanges.clear();
+      updateBatchButtons();
       document.getElementById("inferencePanel").hidden = true;
+    }
+
+    async function applyPendingChanges() {
+      if (pendingChanges.size === 0) return;
+      const n = pendingChanges.size;
+      const changes = [...pendingChanges.values()].map(p => ({
+        an1: p.an1, l1a: p.l1a, l1b: p.l1b,
+        an2: p.an2, l2a: p.l2a, l2b: p.l2b,
+        relation: p.newOrder
+      }));
+      const progressBar = document.getElementById("progressBar");
+      progressBar.hidden = false;
+      try {
+        const res = await fetch("/api/vdiff-matrix/batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ changes })
+        });
+        const json = await res.json().catch(() => ({}));
+        if (res.ok) {
+          pendingChanges.clear();
+          updateBatchButtons();
+          showBatchInferencePanel(n, json.adds || [], json.inferred_adds || [], []);
+          await loadMatrix();
+        } else {
+          // Leave pending changes in place so the user can see which relations
+          // are still selected and deselect the conflicting ones before retrying.
+          showBatchInferencePanel(n, [], [],
+            json.colls || (json.error ? [json.error] : ["Unknown error"]));
+        }
+      } finally {
+        progressBar.hidden = true;
+      }
+    }
+
+    btnApply.addEventListener("click", applyPendingChanges);
+    btnDiscard.addEventListener("click", discardPendingChanges);
+
+    // Warn before navigating away with unapplied changes
+    window.addEventListener("beforeunload", e => {
+      if (pendingChanges.size > 0) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    });
+
+    // Track current pair value so we can revert the selector on cancel
+    let currentPairValue = selPair.value;
+
+    selPair.addEventListener("change", () => {
+      if (pendingChanges.size > 0) {
+        if (!confirm(
+          `You have ${pendingChanges.size} unapplied change(s). ` +
+          `Switch aspect pair and discard them?`
+        )) {
+          selPair.value = currentPairValue;
+          return;
+        }
+      }
+      currentPairValue = selPair.value;
+      discardPendingChanges();
       loadMatrix();
     });
 
@@ -55,70 +139,73 @@
         hideNegative ? "Show negative" : "Hide negative";
       applyNegativeFilter();
     });
-    
+
     async function loadMatrix() {
-        const [an1, an2] = selPair.value.split("|");
+      // Clear any pending state — the matrix is being fully reloaded
+      pendingChanges.clear();
+      updateBatchButtons();
 
-        const [matRes, cls1Res, cls2Res] = await Promise.all([
-          fetch(`/api/vdiff-matrix/${encodeURIComponent(an1)}/${encodeURIComponent(an2)}`),
-          fetch(`/api/aspects/${encodeURIComponent(an1)}/vdiff-classification`),
-          fetch(`/api/aspects/${encodeURIComponent(an2)}/vdiff-classification`),
-        ]);
+      const [an1, an2] = selPair.value.split("|");
 
-        if (!matRes.ok) {
-          document.getElementById("matrixWrapper").innerHTML =
-            "<p class='error'>Could not load matrix.</p>";
-          document.getElementById("matrixSection").hidden = false;
-          return;
-        }
-        const data = await matRes.json();
+      const [matRes, cls1Res, cls2Res] = await Promise.all([
+        fetch(`/api/vdiff-matrix/${encodeURIComponent(an1)}/${encodeURIComponent(an2)}`),
+        fetch(`/api/aspects/${encodeURIComponent(an1)}/vdiff-classification`),
+        fetch(`/api/aspects/${encodeURIComponent(an2)}/vdiff-classification`),
+      ]);
 
-        // Merge classifications: negative in either aspect counts as negative
-        const cls1 = cls1Res.ok ? await cls1Res.json() : {};
-        const cls2 = cls2Res.ok ? await cls2Res.json() : {};
-        currentClassification = {
-          negative: [...(cls1.negative || []), ...(cls2.negative || [])],
-        };
-
-        document.getElementById("matrixTitle").textContent = `Δ(${an1}) vs Δ(${an2})`;
+      if (!matRes.ok) {
+        document.getElementById("matrixWrapper").innerHTML =
+          "<p class='error'>Could not load matrix.</p>";
         document.getElementById("matrixSection").hidden = false;
-
-        renderMatrix(data, document.getElementById("matrixWrapper"));
-        applyNegativeFilter();
+        return;
       }
-    
+      const data = await matRes.json();
+
+      // Merge classifications: negative in either aspect counts as negative
+      const cls1 = cls1Res.ok ? await cls1Res.json() : {};
+      const cls2 = cls2Res.ok ? await cls2Res.json() : {};
+      currentClassification = {
+        negative: [...(cls1.negative || []), ...(cls2.negative || [])],
+      };
+
+      document.getElementById("matrixTitle").textContent = `Δ(${an1}) vs Δ(${an2})`;
+      document.getElementById("matrixSection").hidden = false;
+
+      renderMatrix(data, document.getElementById("matrixWrapper"));
+      applyNegativeFilter();
+    }
+
     function applyNegativeFilter() {
-        const negSet = new Set(currentClassification.negative || []);
-        const table  = document.querySelector("#matrixWrapper .vdiff-table");
-        if (!table) return;
+      const negSet = new Set(currentClassification.negative || []);
+      const table  = document.querySelector("#matrixWrapper .vdiff-table");
+      if (!table) return;
 
-        const colHeaders = table.querySelectorAll("thead th.vdiff-col-header");
-        colHeaders.forEach((th, ci) => {
-          const hide = hideNegative && negSet.has(th.textContent.trim());
-          // ci+1 because column 0 is the row-header column
-          table.querySelectorAll(`tr td:nth-child(${ci + 2}), tr th:nth-child(${ci + 2})`)
-               .forEach(cell => cell.hidden = hide);
-          th.hidden = hide;
-        });
+      const colHeaders = table.querySelectorAll("thead th.vdiff-col-header");
+      colHeaders.forEach((th, ci) => {
+        const hide = hideNegative && negSet.has(th.textContent.trim());
+        // ci+1 because column 0 is the row-header column
+        table.querySelectorAll(`tr td:nth-child(${ci + 2}), tr th:nth-child(${ci + 2})`)
+             .forEach(cell => cell.hidden = hide);
+        th.hidden = hide;
+      });
 
-        table.querySelectorAll("tbody tr").forEach(tr => {
-          const rowHeader = tr.querySelector("th.vdiff-row-header");
-          if (!rowHeader) return;
-          tr.hidden = hideNegative && negSet.has(rowHeader.textContent.trim());
-        });
-      }
+      table.querySelectorAll("tbody tr").forEach(tr => {
+        const rowHeader = tr.querySelector("th.vdiff-row-header");
+        if (!rowHeader) return;
+        tr.hidden = hideNegative && negSet.has(rowHeader.textContent.trim());
+      });
+    }
 
     // Symbol constants — sourced from server via window.EUDOXA (set by nav.js)
-    const C         = window.EUDOXA || {};
-    const GT        = C.GT        || "⊐";
-    const GTE       = C.GTE       || "⊒";
-    const DEQ       = C.DEQ       || "≜";
-    const LTE       = C.LTE       || "⊑";
-    const LT        = C.LT        || "⊏";
-    const TRUE_SYM     = C.TRUE         || "⊒";
-    const FALSE_SYM    = C.FALSE        || "⋣";
-    const EM_DASH      = C.EM_DASH      || "—";
-    const DELTA        = C.DELTA        || "Δ";
+    const C             = window.EUDOXA || {};
+    const GT            = C.GT           || "⊐";
+    const GTE           = C.GTE          || "⊒";
+    const DEQ           = C.DEQ          || "≜";
+    const LTE           = C.LTE          || "⊑";
+    const LT            = C.LT           || "⊏";
+    const FALSE_SYM     = C.FALSE        || "⋣";
+    const EM_DASH       = C.EM_DASH      || "—";
+    const DELTA         = C.DELTA        || "Δ";
     const ZDIFF_DISPLAY = C.ZDIFF_DISPLAY || "◬";
 
     const ORDER_OPTIONS = [
@@ -130,6 +217,15 @@
       { value: "",  label: EM_DASH },
     ];
 
+    function parseLbl(lbl) {
+      if (lbl === ZDIFF_DISPLAY) return ["*", "*"];
+      const reDelta = new RegExp(
+        DELTA.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\((.+),(.+)\\)'
+      );
+      const m = lbl.match(reDelta);
+      return m ? [m[1].trim(), m[2].trim()] : ["*", "*"];
+    }
+
     function collapsible(summary, items) {
       if (!items || items.length === 0) return "";
       return `<details class="vdiff-infer-detail">`
@@ -138,19 +234,20 @@
            + `</details>`;
     }
 
-    function showInferencePanel(la, rel, lb, adds, inferredAdds, colls) {
+    function showBatchInferencePanel(n, adds, inferredAdds, colls) {
       const panel = document.getElementById("inferencePanel");
-      const relLabel = rel === "" ? EM_DASH : rel;
       let inner = "";
       if (colls.length > 0) {
-        inner += `<p class="vdiff-infer-heading"><strong>Relation not set — collision:</strong> `
-              + `${la} ${relLabel} ${lb}</p>`;
+        inner += `<p class="vdiff-infer-heading">`
+              + `<strong>Changes not applied — collision detected.</strong> `
+              + `${n} change(s) still pending (highlighted in yellow). `
+              + `Deselect any conflicting change(s) and try again, `
+              + `or click <em>Discard changes</em> to cancel all.</p>`;
         inner += collapsible("Collisions", colls);
         panel.className = "inference-panel vdiff-infer-coll";
       } else {
-        const verb = rel === "" ? "unset" : "set";
-        inner += `<p class="vdiff-infer-heading"><strong>Relation ${verb}:</strong> `
-              + `${la} ${relLabel} ${lb}</p>`;
+        inner += `<p class="vdiff-infer-heading">`
+              + `<strong>${n} change(s) applied.</strong></p>`;
         inner += collapsible("Added to matrix", adds);
         inner += collapsible("Inferred in closure", inferredAdds);
         panel.className = "inference-panel vdiff-infer-ok";
@@ -160,11 +257,12 @@
     }
 
     function orderClass(ord) {
-      if (ord === DEQ)                   return "vdiff-deq";
-      if (ord === GT || ord === GTE)     return "vdiff-true";
-      if (ord === LT || ord === LTE || ord === FALSE_SYM) return "vdiff-false";
+      if (ord === DEQ)                              return "vdiff-deq";
+      if (ord === GT  || ord === GTE)               return "vdiff-true";
+      if (ord === LT  || ord === LTE || ord === FALSE_SYM) return "vdiff-false";
       return "vdiff-undef";
     }
+
     function renderMatrix(data, wrapper) {
       if (data.row_labels.length === 0) {
         wrapper.innerHTML = "<p class='muted'>No value differences defined.</p>";
@@ -175,10 +273,9 @@
       table.className = "data-table vdiff-table";
 
       // Header row
-      const thead = document.createElement("thead");
+      const thead     = document.createElement("thead");
       const headerRow = document.createElement("tr");
-      // Corner cell showing row-aspect \ col-aspect
-      const corner = document.createElement("th");
+      const corner    = document.createElement("th");
       corner.className = "vdiff-corner";
       corner.innerHTML = "<span class='vdiff-row-label'>row</span>"
                        + "<span class='vdiff-col-label'>col</span>";
@@ -192,8 +289,7 @@
       thead.appendChild(headerRow);
       table.appendChild(thead);
 
-      // Decode URL params for the current aspect pair
-      const [an1, an2] = document.getElementById("selPair").value.split("|");
+      const [an1, an2] = selPair.value.split("|");
 
       // Body rows
       const tbody = document.createElement("tbody");
@@ -205,7 +301,7 @@
         tr.appendChild(th);
 
         row.forEach((cell, ci) => {
-          const td = document.createElement("td");
+          const td     = document.createElement("td");
           const rowLbl = data.row_labels[ri];
           const colLbl = data.col_labels[ci];
 
@@ -214,15 +310,11 @@
             td.textContent = DEQ;
           } else {
             td.className = "vdiff-cell " + orderClass(cell.order_rel);
-            function parseLbl(lbl) {
-              // Natural zero: Δ◬
-              if (lbl === ZDIFF_DISPLAY) return ["*", "*"];
-              const reDelta = new RegExp(DELTA.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\((.+),(.+)\\)');
-              const m = lbl.match(reDelta);
-              return m ? [m[1].trim(), m[2].trim()] : ["*", "*"];
-            }
+
             const [l1a, l1b] = parseLbl(rowLbl);
             const [l2a, l2b] = parseLbl(colLbl);
+            const cellKey = `${an1}|${l1a}|${l1b}|${an2}|${l2a}|${l2b}`;
+
             const sel = document.createElement("select");
             sel.className = "vdiff-select";
             ORDER_OPTIONS.forEach(opt => {
@@ -231,28 +323,25 @@
               if (opt.value === cell.order_rel) o.selected = true;
               sel.appendChild(o);
             });
-            let currentOrder = cell.order_rel;
-            sel.addEventListener("change", async () => {
+
+            const originalOrder = cell.order_rel;
+
+            sel.addEventListener("change", () => {
               const newOrder = sel.value;
-              const url = `/api/vdiff-matrix/${encodeURIComponent(an1)}/${encodeURIComponent(l1a)}/${encodeURIComponent(l1b)}/`
-                        + `${encodeURIComponent(an2)}/${encodeURIComponent(l2a)}/${encodeURIComponent(l2b)}`;
-              const res = await fetch(url, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ relation: newOrder })
-              });
-              const json = await res.json().catch(() => ({}));
-              if (res.ok) {
-                currentOrder = newOrder;
-                showInferencePanel(rowLbl, newOrder, colLbl,
-                  json.adds || [], json.inferred_adds || [], []);
-                await loadMatrix();
+              if (newOrder === originalOrder) {
+                // Changed back to the committed value — no longer pending
+                pendingChanges.delete(cellKey);
+                sel.classList.remove("vdiff-pending");
               } else {
-                sel.value = currentOrder;
-                showInferencePanel(rowLbl, newOrder, colLbl, [], [],
-                  json.colls || [json.error] || []);
+                pendingChanges.set(cellKey, {
+                  an1, l1a, l1b, an2, l2a, l2b,
+                  newOrder, originalOrder, sel
+                });
+                sel.classList.add("vdiff-pending");
               }
+              updateBatchButtons();
             });
+
             td.appendChild(sel);
           }
           tr.appendChild(td);

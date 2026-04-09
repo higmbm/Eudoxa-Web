@@ -79,6 +79,7 @@
 /* ── Inference panel (mirrors aspect_detail.css) ─────────── */
 .inference-panel {
   margin-top: 0.8rem;
+  margin-bottom: 0.8rem;
 }
 
 /* Coloured border on the panel itself */
@@ -126,6 +127,41 @@
 .vdiff-infer-detail li {
   margin: 0.15rem 0;
   font-family: monospace;
+}
+
+/* ── Progress bar (indeterminate, shown during Apply) ────── */
+.progress-bar {
+  height: 4px;
+  background: #e0e0e0;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 0.6rem;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  width: 40%;
+  background: #0b5cff;
+  border-radius: 2px;
+  animation: progress-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes progress-slide {
+  0%   { transform: translateX(-150%); }
+  100% { transform: translateX(350%); }
+}
+
+/* ── Pending (unapplied) dropdown ────────────────────────── */
+.vdiff-select.vdiff-pending {
+  background: #ffe082;
+  color: #4e342e;
+}
+
+/* ── Disabled batch buttons ──────────────────────────────── */
+#btnApply:disabled,
+#btnDiscard:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 /* ── Diagonal cell ───────────────────────────────────────── */
