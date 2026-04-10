@@ -1140,7 +1140,12 @@ class EudoxaManager:
                                     ba = ab.inv()
                                     dc = cd.inv()
                                     origin = ['InvP_R', [ab, rel_ab_cd, cd, rel_cd_ef, ef]]
-                                    app_ac(origin, set_vdiff_relation(closure, dc, ba, TRUE), adds, colls)                            
+                                    app_ac(origin, set_vdiff_relation(closure, dc, ba, TRUE), adds, colls)
+                                if ab.natural_zero(): # xx⊒cd & cd⊒ef ==> fe⊒dc
+                                    fe = ef.inv()
+                                    dc = cd.inv()
+                                    origin = ['InvP_L', [ab, rel_ab_cd, cd, rel_cd_ef, ef]]
+                                    app_ac(origin, set_vdiff_relation(closure, fe, dc, TRUE), adds, colls)
                             elif rel_cd_ef == FALSE: # ab⊒cd & cd⋣ef
                                 rel_cd_ab = get_vdiff_relation(closure, cd, ab)
                                 if (rel_cd_ab == TRUE): # ab≜cd & cd⋣ef ==> ab⋣ef
