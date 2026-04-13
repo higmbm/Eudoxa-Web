@@ -1105,33 +1105,36 @@ class EudoxaManager:
         for (asp1, d_str1, asp2, d_str2, rel) in self.vdc_enum():
             closure[(asp1, asp2)][(d_str1, d_str2)] = rel
         # Compute closure
-        for vd in self.vd_enum_verbose():
-            for ab in self.vd_enum_verbose():
-                an1 = ab.aspect_name
-                for cd in self.vd_enum_verbose():
-                    an2 = cd.aspect_name
-                    for ef in self.vd_enum_verbose():
-                        an3 = ef.aspect_name
-                        rel_cd_ef = get_vdiff_relation(closure, cd, ef)
-                        if (an2 == an3): # Same aspect? Check difference property
-                            if rel_cd_ef == TRUE: # cd⊒ef => ce⊒df
-                                c, d = cd.from_level, cd.to_level
-                                e, f = ef.from_level, ef.to_level
-                                ce = VDiff(an2, c, e)
-                                df = VDiff(an2, d, f)
-                                origin = ['DiffP', [cd, rel_cd_ef, ef]]
-                                app_ac(origin, set_vdiff_relation(closure, ce, df, TRUE), adds, colls)
-                            elif rel_cd_ef == FALSE: # cd⋣ef => fd⋣ec
-                                c, d = cd.from_level, cd.to_level
-                                e, f = ef.from_level, ef.to_level
-                                fd = VDiff(an2, f, d)
-                                ec = VDiff(an2, e, c)
-                                origin = ['NegDiffP', [fd, rel_cd_ef, ec]]
-                                app_ac(origin, set_vdiff_relation(closure, fd, ec, FALSE), adds, colls)
-                        if colls: # A collision has occurred — abort
-                            return (closure, adds, colls)                            
-                        rel_ab_cd = get_vdiff_relation(closure, ab, cd)
-                        if rel_ab_cd == TRUE: # ab⊒cd
+        prev_adds = -1
+        while len(adds) != prev_adds:
+            prev_adds = len(adds)
+            # Phase 1: DiffP / NegDiffP (same-aspect only)
+            for asp_name, asp in self.aspects.items():
+                for c in asp.levels:
+                    for d in asp.levels:
+                        cd = VDiff(asp_name, c, d)
+                        for e in asp.levels:
+                            for f in asp.levels:
+                                ef = VDiff(asp_name, e, f)
+                                rel_cd_ef = get_vdiff_relation(closure, cd, ef)
+                                if rel_cd_ef == TRUE: # cd⊒ef => ce⊒df
+                                    ce = VDiff(asp_name, c, e)
+                                    df = VDiff(asp_name, d, f)
+                                    origin = ['DiffP', [cd, rel_cd_ef, ef]]
+                                    app_ac(origin, set_vdiff_relation(closure, ce, df, TRUE), adds, colls)
+                                elif rel_cd_ef == FALSE: # cd⋣ef => fd⋣ec
+                                    fd = VDiff(asp_name, f, d)
+                                    ec = VDiff(asp_name, e, c)
+                                    origin = ['NegDiffP', [fd, rel_cd_ef, ec]]
+                                    app_ac(origin, set_vdiff_relation(closure, fd, ec, FALSE), adds, colls)
+                                if colls: # A collision has occurred — abort
+                                    return (closure, adds, colls)
+            # Phase 2: TransP / InvP / NegTransP / NegInvP (cd as pivot)
+            for cd in self.vd_enum_verbose():
+                for ab in self.vd_enum_verbose():
+                    rel_ab_cd = get_vdiff_relation(closure, ab, cd)
+                    if rel_ab_cd == TRUE: # ab⊒cd
+                        for ef in self.vd_enum_verbose():
                             rel_cd_ef = get_vdiff_relation(closure, cd, ef)
                             if rel_cd_ef == TRUE: # ab⊒cd & cd⊒ef ==> ab⊒ef
                                 origin = ['TransP', [ab, rel_ab_cd, cd, rel_cd_ef, ef]]
@@ -1148,17 +1151,20 @@ class EudoxaManager:
                                     app_ac(origin, set_vdiff_relation(closure, fe, dc, TRUE), adds, colls)
                             elif rel_cd_ef == FALSE: # ab⊒cd & cd⋣ef
                                 rel_cd_ab = get_vdiff_relation(closure, cd, ab)
-                                if (rel_cd_ab == TRUE): # ab≜cd & cd⋣ef ==> ab⋣ef
+                                if rel_cd_ab == TRUE: # ab≜cd & cd⋣ef ==> ab⋣ef
                                     origin = ['NegTransP_DEQ_L', [ab, DEQ, cd, FALSE, ef]]
                                     app_ac(origin, set_vdiff_relation(closure, ab, ef, FALSE), adds, colls)
-                        elif rel_ab_cd == FALSE:
+                            if colls: # A collision has occurred — abort
+                                return (closure, adds, colls)
+                    elif rel_ab_cd == FALSE: # ab⋣cd
+                        for ef in self.vd_enum_verbose():
                             rel_cd_ef = get_vdiff_relation(closure, cd, ef)
                             if rel_cd_ef == TRUE: # ab⋣cd & cd⊒ef
                                 rel_ef_cd = get_vdiff_relation(closure, ef, cd)
                                 if rel_ef_cd == TRUE: # ab⋣cd & cd≜ef ==> ab⋣ef
                                     origin = ['NegTransP_DEQ_R', [ab, FALSE, cd, DEQ, ef]]
                                     app_ac(origin, set_vdiff_relation(closure, ab, ef, FALSE), adds, colls)
-                            elif rel_cd_ef == FALSE: # ab⋣cd & cd⋣ef
+                            elif rel_cd_ef == FALSE: # ab⋣cd & cd⋣ef ==> ab⋣ef
                                 origin = ['NegTransP', [ab, rel_ab_cd, cd, rel_cd_ef, ef]]
                                 app_ac(origin, set_vdiff_relation(closure, ab, ef, FALSE), adds, colls)
                                 if ab.natural_zero(): # xx⋣cd & cd⋣ef ==> fe⋣dc
@@ -1171,9 +1177,8 @@ class EudoxaManager:
                                     dc = cd.inv()
                                     origin = ['NegInvP_R', [ab, rel_ab_cd, cd, rel_cd_ef, ef]]
                                     app_ac(origin, set_vdiff_relation(closure, dc, ba, FALSE), adds, colls)
-
-                        if colls: # A collision has occurred — abort
-                            return (closure, adds, colls)
+                            if colls: # A collision has occurred — abort
+                                return (closure, adds, colls)
         return (closure, adds, colls)
 
     def expand_vdiff_comparison_matrix(self, an2: str):
