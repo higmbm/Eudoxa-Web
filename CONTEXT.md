@@ -267,7 +267,7 @@ Both `/aspects/<name>` and `/vdiff-matrix` show an inference panel after setting
   Pending dropdowns are highlighted amber (`#ffe082`, class `.vdiff-pending`).
   *Apply changes* and *Discard changes* buttons in the section header are disabled until at least one change is pending.
 - Clicking *Apply changes* POSTs all pending changes to `/api/vdiff-matrix/batch`.
-  An indeterminate progress bar is shown during the request. On success the matrix reloads and highlights clear. On collision **pending changes remain highlighted**
+  An indeterminate progress bar (`.progress-bar`) is shown during the request. On success the matrix reloads and highlights clear. On collision **pending changes remain highlighted**
   so the user can deselect the offending relation(s) and retry; the inference panel explains this. Clicking *Discard changes* restores all dropdowns and clears the pending state at any time.
 - The inference panel sits between the section header and the matrix table so it is always visible without scrolling. It stays visible until the next Apply, Discard, or pair switch.
 - Switching pair with pending changes prompts a confirmation dialog. Navigating away from the page with pending changes triggers a `beforeunload` guard.
@@ -284,12 +284,27 @@ Both `/aspects/<name>` and `/vdiff-matrix` show an inference panel after setting
 | Grey (`#d8d8d8`) | Diagonal (immutable) |
 | Amber (`#ffe082`) | Pending (changed but not yet applied) |
 
+### Indeterminate progress bar
+
+`.progress-bar` / `.progress-bar-fill` (defined in `common.css`) is used wherever an async operation has no deterministic duration. The fill animates left-to-right via `@keyframes progress-slide`. Usage pattern:
+
+```js
+progressBar.hidden = false;
+try { await fetch(…); }
+finally { progressBar.hidden = true; }
+```
+
+Used on:
+- `/vdiff-matrix` — shown during *Apply changes* (`POST /api/vdiff-matrix/batch`)
+- `/` — shown during export (`GET /api/export-project`) and during import (`POST /api/project` + `POST /api/project/import`)
+
 ### Button styles
 
 - `.primary` — blue (`#0b5cff`), white text
 - `.danger` — red (`#b00020`), white text
 - Default — grey (`#f6f6f6`), matches `.header-link-button` exactly
 - `.header-link-button` — `<a>` styled as a button (defined in `common.css`)
+- The *Export project* button on `/` is a real `<button>` (not `<a>`); it downloads via `fetch()` + Blob URL so the progress bar can wrap the entire request
 
 ---
 
@@ -394,8 +409,6 @@ extra outer iterations are only needed when Phase 1 adds new entries that create
 ---
 
 ## Planned/pending work
-
-- Progress bar for export and import
 
 - Add batch set/unset for aspect-level relations (mirrors the vdiff-matrix batch apply)
 
