@@ -174,7 +174,10 @@ class VDiff:
     
     def __ne__(self, other):
         return not self.__eq__(other)
-    
+
+    def __hash__(self):
+        return hash((self.aspect_name, self.from_level, self.to_level))
+
     def inv(self):
         return VDiff(self.aspect_name, self.to_level, self.from_level)
 
@@ -190,7 +193,12 @@ class VDiff:
         if self.natural_zero():
             return ZDIFF_DISPLAY
         return f"{DELTA}({self.from_level},{self.to_level})"
-    
+
+# The single canonical natural-zero vdiff used as a dict key in the vdcm.
+# All aspect-specific natural-zero VDiff objects (where from_level == to_level)
+# are normalised to this sentinel before any vdcm lookup or write.
+NATURAL_ZERO = VDiff(None, None, None)
+
 def str_to_type(data_type_str: str) -> Type:
     if data_type_str == 'int':
         return int
@@ -207,88 +215,70 @@ def parse_type(data_str: str, data_type: Type):
         return float(data_str)
     return str(data_str)
 
-def get_vdiff_relation(vdcm, vd1: VDiff, vd2: VDiff) -> str:
-    an1 = vd1.aspect_name
-    an2 = vd2.aspect_name
-    vdc12 = vdcm[(an1, an2)]
-    d1 = ZDIFF_TUPLE if vd1.from_level == vd1.to_level else (vd1.from_level, vd1.to_level)
-    d2 = ZDIFF_TUPLE if vd2.from_level == vd2.to_level else (vd2.from_level, vd2.to_level)
-    return vdc12[(d1, d2)]
+def _vdiff_key(vd: VDiff) -> VDiff:
+    """Normalise any natural-zero vdiff to the single NATURAL_ZERO sentinel."""
+    return NATURAL_ZERO if vd.natural_zero() else vd
+
+def get_vdiff_relation(vdcm, vd1: VDiff, vd2: VDiff,
+                       default: str = UNDEFINED) -> str:
+    """Look up the relation between vd1 and vd2 in vdcm.
+    Natural-zero vdiffs are normalised to NATURAL_ZERO before lookup.
+    Returns *default* (UNDEFINED) when the pair is absent."""
+    row = vdcm.get(_vdiff_key(vd1))
+    if row is None:
+        return default
+    return row.get(_vdiff_key(vd2), default)
 
 def set_vdiff_relation(vdcm, vd1: VDiff, vd2: VDiff, new_rel: str) -> Tuple:
-    an1 = vd1.aspect_name
-    an2 = vd2.aspect_name
-    vdc12 = vdcm[(an1, an2)]
-    d1 = ZDIFF_TUPLE if vd1.from_level == vd1.to_level else (vd1.from_level, vd1.to_level)
-    d2 = ZDIFF_TUPLE if vd2.from_level == vd2.to_level else (vd2.from_level, vd2.to_level)
-    old_rel = vdc12[(d1, d2)]
+    """Write a relation into vdcm[vd1][vd2], normalising natural zeros.
+    Both entries must already exist (initialised by expand_vdiff_comparison_matrix).
+    Returns (add, coll) — one of which is always None."""
+    k1, k2 = _vdiff_key(vd1), _vdiff_key(vd2)
+    old_rel = vdcm[k1][k2]          # KeyError → not initialised (programming error)
     add, coll = None, None
-    if new_rel == old_rel:      # Same relation — no change
+    if new_rel == old_rel:           # Same relation — no change
         pass
-    elif new_rel == UNDEFINED:  # Unset (clear) relation
+    elif new_rel == UNDEFINED:       # Unset (clear) relation
         add = [vd1, new_rel, vd2]
-        vdc12[(d1, d2)] = new_rel
-    elif old_rel == UNDEFINED:  # Set new relation
+        vdcm[k1][k2] = new_rel
+    elif old_rel == UNDEFINED:       # Set new relation
         add = [vd1, new_rel, vd2]
-        vdc12[(d1, d2)] = new_rel
-    else:                       # Collision: TRUE >> FALSE or FALSE >> TRUE
+        vdcm[k1][k2] = new_rel
+    else:                            # Collision: TRUE ↔ FALSE
         coll = [vd1, old_rel, vd2, new_rel]
     return (add, coll)
 
 def pos(vd: VDiff, aspect: Aspect, vdcm) -> bool:
-    an = aspect.name
-    for vd2 in aspect.vdiffs:
-        if vd2.natural_zero():
-            d = (vd.from_level, vd.to_level)
-            z = ZDIFF_TUPLE
-            rel_dz = vdcm[(an, an)][(d, z)]
-            rel_zd = vdcm[(an, an)][(z, d)]
-            if (rel_dz == TRUE and rel_zd == FALSE):
-                return True
-    return False
+    """vd ⊐ ◬  (strictly positive: vd ⊒ ◬ and ◬ ⋣ vd)."""
+    if vd.natural_zero():
+        return False
+    return (get_vdiff_relation(vdcm, vd, NATURAL_ZERO) == TRUE and
+            get_vdiff_relation(vdcm, NATURAL_ZERO, vd) == FALSE)
 
 def non_neg(vd: VDiff, aspect: Aspect, vdcm) -> bool:
-    """Δ(X,Y) ⊒ ◬  — i.e. the forward TRUE relation to zero exists."""
+    """vd ⊒ ◬  (non-negative)."""
     if vd.natural_zero():
         return True   # ◬ ⊒ ◬ by definition
-    an = aspect.name
-    d = (vd.from_level, vd.to_level)
-    z = ZDIFF_TUPLE
-    return vdcm[(an, an)][(d, z)] == TRUE
+    return get_vdiff_relation(vdcm, vd, NATURAL_ZERO) == TRUE
 
 def zero(vd: VDiff, aspect: Aspect, vdcm) -> bool:
+    """vd ≜ ◬  (equivalent to zero: vd ⊒ ◬ and ◬ ⊒ vd)."""
     if vd.natural_zero():
         return True
-    an = aspect.name
-    for vd2 in aspect.vdiffs:
-        if vd2.natural_zero():
-            d = (vd.from_level, vd.to_level)
-            z = ZDIFF_TUPLE
-            rel_dz = vdcm[(an, an)][(d, z)]
-            rel_zd = vdcm[(an, an)][(z, d)]
-            if (rel_dz == TRUE and rel_zd == TRUE):
-                return True
-    return False
+    return (get_vdiff_relation(vdcm, vd, NATURAL_ZERO) == TRUE and
+            get_vdiff_relation(vdcm, NATURAL_ZERO, vd) == TRUE)
 
 def non_pos(vd: VDiff, aspect: Aspect, vdcm) -> bool:
-    an = aspect.name
-    for vd2 in aspect.vdiffs:
-        if vd2.natural_zero():
-            d = (vd.from_level, vd.to_level)
-            z = ZDIFF_TUPLE
-            rel_zd = vdcm[(an, an)][(z, d)]
-            if (rel_zd == TRUE):
-                return True
-    return False
+    """◬ ⊒ vd  (non-positive)."""
+    if vd.natural_zero():
+        return True
+    return get_vdiff_relation(vdcm, NATURAL_ZERO, vd) == TRUE
 
 def neg(vd: VDiff, aspect: Aspect, vdcm) -> bool:
-    """Δ(X,Y) ⋣ ◬  — i.e. the forward FALSE relation to zero."""
+    """vd ⋣ ◬  (negative)."""
     if vd.natural_zero():
         return False  # ◬ is never negative
-    an = aspect.name
-    d = (vd.from_level, vd.to_level)
-    z = ZDIFF_TUPLE
-    return vdcm[(an, an)][(d, z)] == FALSE
+    return get_vdiff_relation(vdcm, vd, NATURAL_ZERO) == FALSE
 
 def classify_vdiffs(asp: Aspect, vdcm) -> dict:
     """
@@ -327,7 +317,7 @@ class EudoxaManager:
         logger.info('Initializing EudoxaManager')
         self.aspects: Dict[str, Aspect] = {}
         self.consequences : Dict[str, Consequence]  = {}
-        self.vdiff_comparison_matrix: Dict[Tuple[str, str], Dict[Tuple[Tuple[str, str], Tuple[str, str]], str]] = {}
+        self.vdiff_comparison_matrix: Dict[VDiff, Dict[VDiff, str]] = {}
 
     def has_aspect(self, aspect_name: str) -> bool:
         return aspect_name in self.aspects
@@ -338,10 +328,6 @@ class EudoxaManager:
             raise ValueError(f"Aspect name '{name}' may not contain '|'.")
         if name in self.aspects:
             raise ValueError(f"Aspect '{name}' already exists.")
-        self.vdiff_comparison_matrix[(name, name)] = {}
-        for a_name in self.aspects.keys():
-            self.vdiff_comparison_matrix[(a_name, name)] = {}
-            self.vdiff_comparison_matrix[(name, a_name)] = {}
         data_type = str_to_type(data_type_str)
         self.aspects[name] = Aspect(name, data_type, description)
         return self.aspects[name]
@@ -1088,22 +1074,15 @@ class EudoxaManager:
                 yield vd
 
     def vdc_enum(self):
-        for an1 in self.aspects:
-            for an2 in self.aspects:
-                vdcm12 = self.vdiff_comparison_matrix[(an1, an2)]
-                for (d1, d2), rel in vdcm12.items():
-                    yield (an1, d1, an2, d2, rel)
+        """Iterate every (vd1, vd2, rel) triple stored in the vdcm."""
+        for vd1, row in self.vdiff_comparison_matrix.items():
+            for vd2, rel in row.items():
+                yield (vd1, vd2, rel)
 
     def closure(self):
-        # Dict[Tuple[str, str], Dict[Tuple[Tuple[str, str], Tuple[str, str]], str]]
-        closure = {}
         adds, colls = [], []
-        # Initialize
-        for asp1 in self.aspects:
-            for asp2 in self.aspects:
-                closure[(asp1, asp2)] = {}
-        for (asp1, d_str1, asp2, d_str2, rel) in self.vdc_enum():
-            closure[(asp1, asp2)][(d_str1, d_str2)] = rel
+        # Shallow copy: each inner row dict is a new dict so writes don't touch self.vdiff_comparison_matrix
+        closure = {vd1: dict(row) for vd1, row in self.vdiff_comparison_matrix.items()}
         # Compute closure
         prev_adds = -1
         while len(adds) != prev_adds:
@@ -1182,33 +1161,35 @@ class EudoxaManager:
         return (closure, adds, colls)
 
     def expand_vdiff_comparison_matrix(self, an2: str):
-        for (an1, a1) in self.aspects.items():
-            vdcm12 = self.vdiff_comparison_matrix[(an1, an2)]
-            vdcm21 = self.vdiff_comparison_matrix[(an2, an1)]
+        """Add vdcm entries for all new vdiff pairs that involve aspect *an2*.
+
+        Called whenever a level is added to an aspect.  Iterates every existing
+        aspect (including an2 itself) and cross-products its vdiffs with those
+        of an2.  Entries are only written when absent, so existing relations are
+        never overwritten.
+
+        Diagonal initialisation: k1 == k2 → TRUE (covers both the same non-zero
+        vdiff and the NATURAL_ZERO × NATURAL_ZERO self-pair).
+        """
+        vdcm = self.vdiff_comparison_matrix
+        for a1 in self.aspects.values():
             for vd1 in a1.vdiffs:
+                k1 = _vdiff_key(vd1)
                 for vd2 in self.aspects[an2].vdiffs:
-                    d1 = (vd1.from_level, vd1.to_level)
-                    if vd1.natural_zero():
-                        d1 = ZDIFF_TUPLE
-                    d2 = (vd2.from_level, vd2.to_level)
-                    if vd2.natural_zero():
-                        d2 = ZDIFF_TUPLE
-                    rel = UNDEFINED
-                    if (d1 == d2):
-                        if (an1 == an2): # Same aspect?
-                            rel = TRUE                            
-                        elif vd1.natural_zero() and vd2.natural_zero(): # Both zero?
-                            rel = TRUE
-                    if not (d1, d2) in vdcm12:
-                        _l1 = ZDIFF_DISPLAY if d1 == ZDIFF_TUPLE else f"({d1[0]},{d1[1]})"
-                        _l2 = ZDIFF_DISPLAY if d2 == ZDIFF_TUPLE else f"({d2[0]},{d2[1]})"
-                        logger.debug(f"Initialising {_l1}?{_l2}: {rel}")
-                        vdcm12[(d1, d2)] = rel
-                    if not (d2, d1) in vdcm21:
-                        _l1 = ZDIFF_DISPLAY if d1 == ZDIFF_TUPLE else f"({d1[0]},{d1[1]})"
-                        _l2 = ZDIFF_DISPLAY if d2 == ZDIFF_TUPLE else f"({d2[0]},{d2[1]})"
-                        logger.debug(f"Initialising {_l2}?{_l1}: {rel}")
-                        vdcm21[(d2, d1)] = rel
+                    k2 = _vdiff_key(vd2)
+                    rel = TRUE if k1 == k2 else UNDEFINED
+                    # Forward: k1 → k2
+                    if k1 not in vdcm:
+                        vdcm[k1] = {}
+                    if k2 not in vdcm[k1]:
+                        logger.debug(f"Initialising {k1}?{k2}: {rel}")
+                        vdcm[k1][k2] = rel
+                    # Reverse: k2 → k1
+                    if k2 not in vdcm:
+                        vdcm[k2] = {}
+                    if k1 not in vdcm[k2]:
+                        logger.debug(f"Initialising {k2}?{k1}: {rel}")
+                        vdcm[k2][k1] = rel
     
     def compute_consequence_space(self) -> List:
         """Derive the full consequence space from aspects and their levels.
@@ -1400,13 +1381,6 @@ class EudoxaManager:
             return ZDIFF_DISPLAY
         return f"({vd.from_level},{vd.to_level})"
 
-    def _vd_key(self, vd):
-        """Return the dict key tuple for a VDiff.
-        Same-level diffs (including None,None) all map to ZDIFF_TUPLE."""
-        if vd.from_level == vd.to_level:
-            return ZDIFF_TUPLE
-        return (vd.from_level, vd.to_level)
-
     def _sorted_vdiffs(self, asp):
         """Return asp.vdiffs sorted: zero-diff first, then (from, to) pairs
         sorted by (level_index[from], level_index[to])."""
@@ -1441,9 +1415,7 @@ class EudoxaManager:
                 prev_an1 = an1
             ws.cell(row=row_index, column=3).value = self._vd_label(vd1)
             for col_offset, (an2, vd2) in enumerate(ordered):
-                rel = self.vdiff_comparison_matrix.get((an1, an2), {}).get(
-                    (self._vd_key(vd1), self._vd_key(vd2)), UNDEFINED
-                )
+                rel = get_vdiff_relation(self.vdiff_comparison_matrix, vd1, vd2)
                 ws.cell(row=row_index, column=4 + col_offset).value = rel
 
     def export_vdiff_comparison_matrix_to_excel(self, filename: str):
@@ -1873,14 +1845,9 @@ class EudoxaManager:
 
     def vdiff_comparison_matrix_str(self, vdcm):
         result = ""
-        for a1_name in self.aspects.keys():
-            a1 = self.get_aspect(a1_name)
-            for a2_name in self.aspects.keys():
-                a1a2 = vdcm[(a1_name, a2_name)]
-                result += a1_name + "|" + a2_name + "[" + str(len(a1a2)) + "]:\n"
-                a2 = self.get_aspect(a2_name)
-                for ((d1, d2), rel) in a1a2.items():
-                    result += "   " + DELTA + str(d1) + " " + GTE + " " + DELTA + str(d2) + " " + str(rel) + "\n"
+        for vd1, row in vdcm.items():
+            for vd2, rel in row.items():
+                result += f"   {vd1} {GTE} {vd2}: {rel}\n"
         return result
 
     def __repr__(self):
@@ -1900,20 +1867,29 @@ class EudoxaManager:
 
     def to_dict(self):
         """Full JSON-serialization of the entire EudoxaManager."""
-        # Serialize vdiff_comparison_matrix with string keys
+
+        def _vd_serial(vd: VDiff) -> str:
+            """Encode a VDiff as a JSON-safe string key.
+            NATURAL_ZERO → ZDIFF_DISPLAY ('◬').
+            Other vdiffs → 'aspect_name|||from_level|||to_level'.
+            ('|||' is forbidden in aspect names, and level names that contain
+            '|||' are extremely unlikely in practice.)
+            """
+            if vd is NATURAL_ZERO or vd.natural_zero():
+                return ZDIFF_DISPLAY
+            an = vd.aspect_name or ""
+            fl = "" if vd.from_level is None else str(vd.from_level)
+            tl = "" if vd.to_level  is None else str(vd.to_level)
+            return f"{an}|||{fl}|||{tl}"
+
         vdcm_out = {}
-        for (a1, a2), relation_map in self.vdiff_comparison_matrix.items():
-            key = f"{a1}|||{a2}"
-            vdcm_out[key] = {}
-            for (d1, d2), rel in relation_map.items():
-                d1s = f"{d1[0] if d1[0] is not None else ''}::{d1[1] if d1[1] is not None else ''}"
-                d2s = f"{d2[0] if d2[0] is not None else ''}::{d2[1] if d2[1] is not None else ''}"
-                pair_key = f"{d1s}>>{d2s}"
-                vdcm_out[key][pair_key] = rel
-    
+        for vd1, row in self.vdiff_comparison_matrix.items():
+            k1 = _vd_serial(vd1)
+            vdcm_out[k1] = {_vd_serial(vd2): rel for vd2, rel in row.items()}
+
         return {
-            "__schema__": 1,
-            "aspects": { 
+            "__schema__": 2,
+            "aspects": {
                 name: aspect.to_dict()
                 for name, aspect in self.aspects.items()
             },
@@ -1927,38 +1903,61 @@ class EudoxaManager:
     @classmethod
     def from_dict(cls, data):
         mgr = cls()
-    
+
         # Clear auto-generated initial values
         mgr.aspects = {}
         mgr.consequences = {}
         mgr.vdiff_comparison_matrix = {}
-    
+
         # ---- Aspects ----
         for name, asp_data in data.get("aspects", {}).items():
             mgr.aspects[name] = Aspect.from_dict(asp_data)
-    
+
         # ---- Consequences ----
         for short, cons_data in data.get("consequences", {}).items():
             mgr.consequences[short] = Consequence.from_dict(cons_data)
-    
-    
+
         # ---- VDiff comparison matrix ----
+        schema = data.get("__schema__", 1)
         vdcm_in = data.get("vdiff_comparison_matrix", {})
-        for key, relation_map in vdcm_in.items():
-            a1, a2 = key.split("|||")
-            mgr.vdiff_comparison_matrix[(a1, a2)] = {}
-    
-            for pair_key, rel in relation_map.items():
-                d1s, d2s = pair_key.split(">>")
-                f1, t1 = d1s.split("::")
-                f2, t2 = d2s.split("::")
-    
-                # None is represented as '' in VDiff
-                f1 = None if f1 == "" else f1
-                t1 = None if t1 == "" else t1
-                f2 = None if f2 == "" else f2
-                t2 = None if t2 == "" else t2
-    
-                mgr.vdiff_comparison_matrix[(a1, a2)][((f1, t1), (f2, t2))] = rel
-    
+
+        if schema >= 2:
+            # Schema 2: keys are '_vd_serial' strings produced by to_dict.
+            def _vd_parse(key: str) -> VDiff:
+                if key == ZDIFF_DISPLAY:
+                    return NATURAL_ZERO
+                parts = key.split("|||")
+                an = parts[0] or None
+                fl = parts[1] or None
+                tl = parts[2] or None
+                return VDiff(an, fl, tl)
+
+            for k1, row in vdcm_in.items():
+                vd1 = _vd_parse(k1)
+                mgr.vdiff_comparison_matrix[vd1] = {
+                    _vd_parse(k2): rel for k2, rel in row.items()
+                }
+
+        else:
+            # Schema 1 (legacy): outer keys are "a1|||a2", inner keys are
+            # "f1::t1>>f2::t2".  Migrate by normalising natural zeros to
+            # NATURAL_ZERO; duplicate entries (e.g. the same NATURAL_ZERO pair
+            # appearing under several aspect-pair outer keys) are idempotent.
+            vdcm = mgr.vdiff_comparison_matrix
+            for key, relation_map in vdcm_in.items():
+                a1, a2 = key.split("|||")
+                for pair_key, rel in relation_map.items():
+                    d1s, d2s = pair_key.split(">>")
+                    f1, t1 = d1s.split("::")
+                    f2, t2 = d2s.split("::")
+                    f1 = None if f1 == "" else f1
+                    t1 = None if t1 == "" else t1
+                    f2 = None if f2 == "" else f2
+                    t2 = None if t2 == "" else t2
+                    k1 = _vdiff_key(VDiff(a1, f1, t1))
+                    k2 = _vdiff_key(VDiff(a2, f2, t2))
+                    if k1 not in vdcm:
+                        vdcm[k1] = {}
+                    vdcm[k1][k2] = rel
+
         return mgr

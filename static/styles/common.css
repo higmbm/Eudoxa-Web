@@ -157,6 +157,29 @@ td.editable-desc:empty::before {
   background: #ebebeb;
 }
 
+/* ── Indeterminate progress bar ─────────────────────────── */
+.progress-bar {
+  height: 4px;
+  background: #e0e0e0;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  width: 40%;
+  background: #0b5cff;
+  border-radius: 2px;
+  animation: progress-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes progress-slide {
+  0%   { transform: translateX(-150%); }
+  100% { transform: translateX(350%); }
+}
+
 /* ── Site navigation bar ─────────────────────────────────── */
 .site-nav {
   font-size: 0.85rem;

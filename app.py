@@ -608,12 +608,7 @@ def get_vdiff_matrix(an1, an2):
     if an2 not in mgr.aspects:
         return {"error": f"Aspect '{an2}' not found"}, 404
 
-    sub_12 = mgr.vdiff_comparison_matrix.get((an1, an2), {})
-    sub_21 = mgr.vdiff_comparison_matrix.get((an2, an1), {})
-
-    def vd_key(vd):
-        return eudoxa.ZDIFF_TUPLE if vd.natural_zero() \
-               else (str(vd.from_level), str(vd.to_level))
+    vdcm = mgr.vdiff_comparison_matrix
 
     def derive_order(raw_fwd, raw_bwd):
         T, F = eudoxa.TRUE, eudoxa.FALSE
@@ -632,13 +627,11 @@ def get_vdiff_matrix(an1, an2):
 
     cells = []
     for rv in row_vdiffs:
-        rk = vd_key(rv)
         row = []
         for cv in col_vdiffs:
-            ck      = vd_key(cv)
-            raw_fwd = sub_12.get((rk, ck), eudoxa.UNDEFINED)
-            raw_bwd = sub_21.get((ck, rk), eudoxa.UNDEFINED)
-            diag    = (an1 == an2 and rk == ck)
+            raw_fwd = eudoxa.get_vdiff_relation(vdcm, rv, cv)
+            raw_bwd = eudoxa.get_vdiff_relation(vdcm, cv, rv)
+            diag    = (an1 == an2 and rv == cv)
             row.append({
                 "order_rel": derive_order(raw_fwd, raw_bwd),
                 "raw_rel":   raw_fwd,

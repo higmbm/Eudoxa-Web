@@ -51,8 +51,9 @@ flask-pythonanywhere-test/
 | `CONS` | `"\|CONS\|"` | Excel tab: consequences |
 | `VDCM` | `"\|VDCM\|"` | Excel tab: VDiff comparison matrix |
 | `DELTA` | `"Δ"` | VDiff display prefix |
-| `ZDIFF_TUPLE` | `(None, None)` | Internal dict key for natural zero-diffs |
+| `ZDIFF_TUPLE` | `(None, None)` | Legacy tuple key (still used in Excel import label parsing) |
 | `ZDIFF_DISPLAY` | `"◬"` (U+25EC) | Display/persistence symbol for natural zero-diffs |
+| `NATURAL_ZERO` | `VDiff(None, None, None)` | Single canonical vdcm dict key for all natural zero-diffs |
 | `TRUE` | `"⊒"` | VDCM: vd1 ⊒ vd2 (vd1 ≥ vd2 in the VDiff order) |
 | `FALSE` | `"⋣"` | VDCM: vd1 ⋣ vd2 (vd1 < vd2) |
 | `UNDEFINED` | `""` | VDCM: relation not yet set |
@@ -61,8 +62,11 @@ flask-pythonanywhere-test/
 
 ### Natural zero-diffs
 
-A natural zero-diff `◬` for aspect A represents the difference Δ(X,X) — any level compared to itself. Internally keyed as `(None, None)` in the VDCM dict.
-Normalisation to `(None, None)` happens in `_vd_key`, `get_vdiff_relation`, and `set_vdiff_relation` by checking `from_level == to_level`. Aspect level `*` is **not** reserved (unlike in earlier versions).
+A natural zero-diff `◬` represents the difference Δ(X,X) — any level compared to itself. Conceptually there is only one natural zero-diff regardless of which aspect it comes from.
+
+Internally the vdcm uses the single sentinel `NATURAL_ZERO = VDiff(None, None, None)` as the dict key for all natural-zero entries. The module-level helper `_vdiff_key(vd)` normalises any VDiff with `from_level == to_level` to `NATURAL_ZERO`; it is called by both `get_vdiff_relation` and `set_vdiff_relation`. Aspect-specific natural-zero VDiff objects (e.g. `VDiff("Betyg", None, None)`) still appear in `Aspect.vdiffs` for iteration purposes, but are never used directly as dict keys.
+
+Aspect level `*` is **not** reserved (unlike in earlier versions).
 
 ### VDiff ordering: TRUE/FALSE vs GT/GTE/DEQ/LTE/LT
 
@@ -74,6 +78,22 @@ The derived order relation shown in the UI is computed from the raw forward and 
 - `TRUE` fwd + `UNDEFINED` bwd → `⊒` (GTE)
 - `FALSE` fwd + `TRUE` bwd → `⊏` (LT)
 - etc.
+
+### VDiff comparison matrix (vdcm) structure
+
+The vdcm is a two-level adjacency dict:
+
+```python
+vdcm: Dict[VDiff, Dict[VDiff, str]]
+# vdcm[vd1][vd2] == relation between vd1 and vd2
+```
+
+`VDiff` is hashable (`__hash__` based on `(aspect_name, from_level, to_level)`).
+All natural-zero vdiffs are stored under the single `NATURAL_ZERO` key — there is no separate per-aspect entry for `◬`.
+
+Access is always via `get_vdiff_relation(vdcm, vd1, vd2)` and `set_vdiff_relation(vdcm, vd1, vd2, rel)`, which call `_vdiff_key` to normalise before touching the dict.
+
+`expand_vdiff_comparison_matrix(an2)` is called after each `add_level` call. It cross-products all vdiffs of every existing aspect with the vdiffs of `an2`, initialising missing entries to `UNDEFINED` (or `TRUE` for `k1 == k2`). It never overwrites existing entries.
 
 ### VDiff ordering in export and UI
 
@@ -124,9 +144,19 @@ save_manager(mgr)       # serialises and writes to file store
 
 ### `to_dict` / `from_dict` serialisation
 
-VDCM keys use `||` separators:
-- Aspect pair key: `"A1|||A2"`
-- VDiff pair key: `"f1::t1>>f2::t2"` where `None` is serialised as `""`
+The file format is versioned via `"__schema__"` in the top-level dict.
+
+**Schema 2 (current):** Each VDiff is serialised as a single string key:
+- `NATURAL_ZERO` → `"◬"`
+- Other vdiffs → `"aspect_name|||from_level|||to_level"`
+
+The vdcm is stored as a two-level JSON object mirroring the adjacency dict:
+```json
+{ "◬": { "◬": "⊒", "Betyg|||G|||IG": "" },
+  "Betyg|||G|||IG": { "◬": "", "Betyg|||VG|||G": "⊒" } }
+```
+
+**Schema 1 (legacy):** Outer key `"A1|||A2"` (aspect pair), inner key `"f1::t1>>f2::t2"` (two vdiff tuples, `None` as `""`). `from_dict` detects schema 1 and migrates automatically by normalising natural zeros to `NATURAL_ZERO`. Files produced on the `main` branch before this refactor are schema 1.
 
 ---
 
@@ -237,7 +267,7 @@ Both `/aspects/<name>` and `/vdiff-matrix` show an inference panel after setting
   Pending dropdowns are highlighted amber (`#ffe082`, class `.vdiff-pending`).
   *Apply changes* and *Discard changes* buttons in the section header are disabled until at least one change is pending.
 - Clicking *Apply changes* POSTs all pending changes to `/api/vdiff-matrix/batch`.
-  An indeterminate progress bar is shown during the request. On success the matrix reloads and highlights clear. On collision **pending changes remain highlighted**
+  An indeterminate progress bar (`.progress-bar`) is shown during the request. On success the matrix reloads and highlights clear. On collision **pending changes remain highlighted**
   so the user can deselect the offending relation(s) and retry; the inference panel explains this. Clicking *Discard changes* restores all dropdowns and clears the pending state at any time.
 - The inference panel sits between the section header and the matrix table so it is always visible without scrolling. It stays visible until the next Apply, Discard, or pair switch.
 - Switching pair with pending changes prompts a confirmation dialog. Navigating away from the page with pending changes triggers a `beforeunload` guard.
@@ -254,12 +284,27 @@ Both `/aspects/<name>` and `/vdiff-matrix` show an inference panel after setting
 | Grey (`#d8d8d8`) | Diagonal (immutable) |
 | Amber (`#ffe082`) | Pending (changed but not yet applied) |
 
+### Indeterminate progress bar
+
+`.progress-bar` / `.progress-bar-fill` (defined in `common.css`) is used wherever an async operation has no deterministic duration. The fill animates left-to-right via `@keyframes progress-slide`. Usage pattern:
+
+```js
+progressBar.hidden = false;
+try { await fetch(…); }
+finally { progressBar.hidden = true; }
+```
+
+Used on:
+- `/vdiff-matrix` — shown during *Apply changes* (`POST /api/vdiff-matrix/batch`)
+- `/` — shown during export (`GET /api/export-project`) and during import (`POST /api/project` + `POST /api/project/import`)
+
 ### Button styles
 
 - `.primary` — blue (`#0b5cff`), white text
 - `.danger` — red (`#b00020`), white text
 - Default — grey (`#f6f6f6`), matches `.header-link-button` exactly
 - `.header-link-button` — `<a>` styled as a button (defined in `common.css`)
+- The *Export project* button on `/` is a real `<button>` (not `<a>`); it downloads via `fetch()` + Blob URL so the progress bar can wrap the entire request
 
 ---
 
@@ -357,15 +402,13 @@ extra outer iterations are only needed when Phase 1 adds new entries that create
 
 - **Aspect reordering via drag-and-drop** in `/` was attempted but deferred.
 
-- `pos`, `zero`, and `non_pos` in `eudoxa.py` have the same natural-zero bug that was fixed in `non_neg` and `neg` — they return incorrect results for the natural zero-diff. Fix when these functions are needed.
+- `pos`, `zero`, and `non_pos` had a natural-zero bug (returning incorrect results for ◬) that was present in `non_neg` and `neg` too; all five were corrected in the vdcm refactor (branch `refactor/vdcm`).
 
 - **Response time** for Apply changes in `/vdiff-matrix` is dominated by the closure computation. Batch apply (one closure run for all pending changes) is implemented for VDiff relations but not yet for aspect-level relations. Worst-case complexity is O(n⁴) but typical cost is O(d·n³) with d ≈ 2–4. An incremental closure algorithm (O(n²) per relation change) remains a longer-term option.
 
 ---
 
 ## Planned/pending work
-
-- Progress bar for export and import
 
 - Add batch set/unset for aspect-level relations (mirrors the vdiff-matrix batch apply)
 
@@ -379,7 +422,7 @@ extra outer iterations are only needed when Phase 1 adds new entries that create
 
 - Show collection of differences (special view?) and let the user set "undecided" differences as pos/non-neg/zero/non-pos/neg
 
-- Design choice: Special treatment of natural zero diff, to avoid redundancy?
+- ~~Design choice: Special treatment of natural zero diff, to avoid redundancy?~~ Resolved: vdcm refactored to adjacency dict with single `NATURAL_ZERO` key (branch `refactor/vdcm`).
 
 - Vdiff relation matrix closure
 

@@ -23,8 +23,9 @@
     <h1 class="project-controls">
       {{ project_name }}
       <button id="btnManage">Manage project</button>
-      <a href="/api/export-project" class="header-link-button">Export project</a>
+      <button id="btnExportProject">Export project</button>
     </h1>
+    <div id="exportProgressBar" class="progress-bar" hidden><div class="progress-bar-fill"></div></div>
 
     <!-- Manage panel (hidden until toggled) -->
     <div id="managePanel" class="action-panel" hidden>
@@ -140,6 +141,7 @@
       <button id="btnImportProject">Import project from Excel</button>
       <input id="fileImportProject" type="file" accept=".xlsx" hidden>
     </div>
+    <div id="importProgressBar" class="progress-bar" hidden><div class="progress-bar-fill"></div></div>
 
     <!-- Import result panel (shown here on import failure) -->
     <div id="importResult" class="import-result" hidden></div>
@@ -204,10 +206,38 @@
       });
     }
 
+    // ── Export project ─────────────────────────────────────────
+    const btnExportProject    = document.getElementById("btnExportProject");
+    const exportProgressBar   = document.getElementById("exportProgressBar");
+
+    if (btnExportProject) {
+      btnExportProject.addEventListener("click", async () => {
+        exportProgressBar.hidden = false;
+        try {
+          const res = await fetch("/api/export-project");
+          if (!res.ok) { alert("Export failed."); return; }
+          const blob = await res.blob();
+          const url  = URL.createObjectURL(blob);
+          const a    = document.createElement("a");
+          const disposition = res.headers.get("Content-Disposition") || "";
+          const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+          a.download = match ? match[1].replace(/['"]/g, "") : "export.xlsx";
+          a.href = url;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        } finally {
+          exportProgressBar.hidden = true;
+        }
+      });
+    }
+
     // ── Import project ─────────────────────────────────────────
     const btnImportProject  = document.getElementById("btnImportProject");
     const fileImportProject = document.getElementById("fileImportProject");
     const importResultEl    = document.getElementById("importResult");
+    const importProgressBar = document.getElementById("importProgressBar");
 
     if (btnImportProject) {
       btnImportProject.addEventListener("click", () => {
@@ -225,37 +255,42 @@
         const name = (document.getElementById("inputProjectName")?.value || "").trim();
         const author = (document.getElementById("inputAuthor")?.value || "").trim();
 
-        // Step 1: create the project (placeholder name if none given)
-        const createRes = await fetch("/api/project", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ project_name: name || "Importing…", author })
-        });
-        if (!createRes.ok) {
-          let msg = `${createRes.status} ${createRes.statusText}`;
-          try { const j = await createRes.json(); msg = j.error || msg; } catch {}
-          showImportResult({ error: msg });
-          return;
-        }
+        if (importProgressBar) importProgressBar.hidden = false;
+        try {
+          // Step 1: create the project (placeholder name if none given)
+          const createRes = await fetch("/api/project", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ project_name: name || "Importing…", author })
+          });
+          if (!createRes.ok) {
+            let msg = `${createRes.status} ${createRes.statusText}`;
+            try { const j = await createRes.json(); msg = j.error || msg; } catch {}
+            showImportResult({ error: msg });
+            return;
+          }
 
-        // Step 2: import the file
-        const formData = new FormData();
-        formData.append("file", file);
-        const importRes = await fetch("/api/project/import", {
-          method: "POST",
-          body: formData
-        });
-        const json = await importRes.json().catch(() => ({}));
-        const result = json.import_result || {};
+          // Step 2: import the file
+          const formData = new FormData();
+          formData.append("file", file);
+          const importRes = await fetch("/api/project/import", {
+            method: "POST",
+            body: formData
+          });
+          const json = await importRes.json().catch(() => ({}));
+          const result = json.import_result || {};
 
-        if (importRes.ok) {
-          // Carry result across the reload via sessionStorage
-          sessionStorage.setItem("importResult", JSON.stringify(result));
-          location.reload();
-        } else {
-          // Import failed — delete the just-created project
-          await fetch("/api/project", { method: "DELETE" });
-          showImportResult(result.success === undefined ? { error: json.error || "Import failed." } : result);
+          if (importRes.ok) {
+            // Carry result across the reload via sessionStorage
+            sessionStorage.setItem("importResult", JSON.stringify(result));
+            location.reload();
+          } else {
+            // Import failed — delete the just-created project
+            await fetch("/api/project", { method: "DELETE" });
+            showImportResult(result.success === undefined ? { error: json.error || "Import failed." } : result);
+          }
+        } finally {
+          if (importProgressBar) importProgressBar.hidden = true;
         }
       });
     }
