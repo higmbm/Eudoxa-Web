@@ -497,6 +497,51 @@ def get_level_graph(aspect_name):
         return {"error": "Could not compute level graph."}, 500
 
 
+# ── Aspect level relation formatting helpers ──────────────────────────────────
+
+_AL_RULE_LABELS = {
+    'DiffP':      'Difference property',
+    'NegDiffP':   'Negative difference property',
+    'TransP':     'Transitivity property',
+    'InvP':       'Inverse difference property',
+    'TransP2':    'Transitivity property 2',
+    'NegTransP':  'Negative transitivity property',
+    'NegTransP2': 'Negative transitivity property 2',
+    'NegInvP':    'Negative inverse difference property',
+}
+
+
+def _fmt_al_tokens(items):
+    return " ".join(repr(x) if hasattr(x, 'aspect_name')
+                    else (str(x) if x else '\u2014') for x in items)
+
+
+def _fmt_al_origin(origin_type, origin_detail):
+    if origin_type == 'SETREL':
+        aspect, la, rel, lb = origin_detail
+        rel_label = rel if rel else '\u2014'
+        return f"Set '{la} {rel_label} {lb}' in {aspect}"
+    label = _AL_RULE_LABELS.get(origin_type)
+    if label:
+        return f"{label}: {_fmt_al_tokens(origin_detail)}"
+    return f"{origin_type}({_fmt_al_tokens(origin_detail)})"
+
+
+def _fmt_al_entry(entry):
+    origin_type, origin_detail, result = entry
+    return f"{_fmt_al_origin(origin_type, origin_detail)} \u2192 {_fmt_al_tokens(result)}"
+
+
+def _fmt_al_coll(entry):
+    origin_type, origin_detail, coll = entry
+    vd1, existing_rel, vd2, attempted_rel = coll
+    return (
+        f"{_fmt_al_origin(origin_type, origin_detail)} \u2192 "
+        f"attempted {repr(vd1)} {attempted_rel} {repr(vd2)} "
+        f"conflicts with existing {repr(vd1)} {existing_rel} {repr(vd2)}"
+    )
+
+
 @app.patch("/api/aspects/<aspect_name>/relations/<la>/<lb>")
 def patch_relation(aspect_name, la, lb):
     mgr = load_manager_or_400()
@@ -509,53 +554,6 @@ def patch_relation(aspect_name, la, lb):
     if rel not in eudoxa.AL_RELATION_OPTIONS:
         return {"error": f"Invalid relation '{rel}'"}, 400
 
-    def fmt_tokens(items):
-        """Render a mixed list of VDiffs and relation strings as a single string."""
-        return " ".join(repr(x) if hasattr(x, 'aspect_name') else (str(x) if x else '—') for x in items)
-
-    RULE_LABELS = {
-        'DiffP':      'Difference property',
-        'NegDiffP':   'Negative difference property',
-        'TransP':     'Transitivity property',
-        'InvP':       'Inverse difference property',
-        'TransP2':    'Transitivity property 2',
-        'NegTransP':  'Negative transitivity property',
-        'NegTransP2': 'Negative transitivity property 2',
-        'NegInvP':    'Negative inverse difference property',
-    }
-
-    def fmt_origin(origin_type, origin_detail):
-        """Translate an inference rule origin to natural language where known,
-        falling back to the raw symbolic form for unrecognised patterns."""
-        if origin_type == 'SETREL':
-            # ['SETREL', [aspect, la, rel, lb]]
-            aspect, la, rel, lb = origin_detail
-            rel_label = rel if rel else '\u2014'
-            return f"Set '{la} {rel_label} {lb}' in {aspect}"
-        label = RULE_LABELS.get(origin_type)
-        if label:
-            return f"{label}: {fmt_tokens(origin_detail)}"
-        # Fallback: raw symbolic form
-        return f"{origin_type}({fmt_tokens(origin_detail)})"
-
-    def fmt_result(add):
-        """Render the result of an inference step as a symbolic vdiff relation."""
-        return fmt_tokens(add)
-
-    def fmt_add(entry):
-        origin_type, origin_detail, add = entry
-        return f"{fmt_origin(origin_type, origin_detail)} \u2192 {fmt_result(add)}"
-
-    def fmt_coll(entry):
-        origin_type, origin_detail, coll = entry
-        # coll alternates: vd1, existing_rel, vd2, attempted_rel
-        vd1, existing_rel, vd2, attempted_rel = coll
-        return (
-            f"{fmt_origin(origin_type, origin_detail)} \u2192 "
-            f"attempted {repr(vd1)} {attempted_rel} {repr(vd2)} "
-            f"conflicts with existing {repr(vd1)} {existing_rel} {repr(vd2)}"
-        )
-
     try:
         adds, colls, inferred_adds = mgr.try_set_aspect_level_relation(aspect_name, la, lb, rel)
     except ValueError as e:
@@ -564,15 +562,66 @@ def patch_relation(aspect_name, la, lb):
     if colls:
         return {
             "message": "Relation rejected",
-            "colls": [fmt_coll(e) for e in colls]
+            "colls": [_fmt_al_coll(e) for e in colls]
         }, 409
 
     save_manager(mgr)
 
     return {
         "message": "Relation updated",
-        "adds":          [fmt_add(e) for e in adds],
-        "inferred_adds": [fmt_add(e) for e in inferred_adds]
+        "adds":          [_fmt_al_entry(e) for e in adds],
+        "inferred_adds": [_fmt_al_entry(e) for e in inferred_adds]
+    }, 200
+
+
+@app.post("/api/aspects/<aspect_name>/relations/batch")
+def batch_patch_relations(aspect_name):
+    """Apply a batch of aspect level relation changes atomically.
+    Body: { "changes": [{ "la": "...", "lb": "...", "relation": "..." }, ...] }
+    On success:   { "adds": [...], "inferred_adds": [...] }
+    On collision: { "colls": [...] }, 409
+    """
+    mgr = load_manager_or_400()
+    if aspect_name not in mgr.aspects:
+        return {"error": f"Aspect '{aspect_name}' not found"}, 404
+
+    data    = request.get_json(force=True)
+    changes = data.get("changes", [])
+
+    if not changes:
+        return {"error": "No changes provided"}, 400
+
+    aspect = mgr.aspects[aspect_name]
+
+    for ch in changes:
+        if ch.get("relation", eudoxa.UNDEFINED) not in eudoxa.AL_RELATION_OPTIONS:
+            return {"error": f"Invalid relation: {ch.get('relation')!r}"}, 400
+        for lvl in (ch.get("la"), ch.get("lb")):
+            if lvl and lvl not in aspect.levels:
+                return {"error": f"Level '{lvl}' not found in aspect '{aspect_name}'"}, 404
+
+    all_adds          = []
+    all_inferred_adds = []
+
+    for ch in changes:
+        la, lb, rel = ch["la"], ch["lb"], ch["relation"]
+        try:
+            adds, colls, inferred_adds = mgr.try_set_aspect_level_relation(
+                aspect_name, la, lb, rel
+            )
+        except ValueError as e:
+            return {"error": str(e)}, 404
+
+        if colls:
+            return {"colls": [_fmt_al_coll(c) for c in colls]}, 409
+
+        all_adds.extend(adds)
+        all_inferred_adds.extend(inferred_adds)
+
+    save_manager(mgr)
+    return {
+        "adds":          [_fmt_al_entry(e) for e in all_adds],
+        "inferred_adds": [_fmt_al_entry(e) for e in all_inferred_adds]
     }, 200
 
 

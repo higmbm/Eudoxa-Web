@@ -72,7 +72,10 @@
   <div class="section-header">
     <h2>Level relations</h2>
     <button id="btnToggleGraph" class="toggle-graph-btn">Show graph</button>
+    <button id="btnApply"   class="primary" disabled>Apply changes</button>
+    <button id="btnDiscard"               disabled>Discard changes</button>
   </div>
+  <div id="progressBar" class="progress-bar" hidden><div class="progress-bar-fill"></div></div>
 
   <!-- Graph: hidden by default, shown above the matrix when toggled -->
   <div id="levelGraphSection" hidden>
@@ -261,7 +264,78 @@
     let relOptions       = [];
     let relCells         = {};
 
+    // ── Pending changes ──────────────────────────────────────────
+    // Maps cellKey ("la|||lb") → { la, lb, newRel, originalRel, sel }
+    const pendingChanges = new Map();
+
+    const btnApply   = document.getElementById("btnApply");
+    const btnDiscard = document.getElementById("btnDiscard");
+
+    function updateBatchButtons() {
+      const hasPending = pendingChanges.size > 0;
+      btnApply.disabled   = !hasPending;
+      btnDiscard.disabled = !hasPending;
+    }
+
+    function discardPendingChanges() {
+      pendingChanges.forEach(p => {
+        p.sel.value = p.originalRel;
+        p.sel.closest("td").classList.remove("rel-pending");
+      });
+      pendingChanges.clear();
+      updateBatchButtons();
+      document.getElementById("inferencePanel").hidden = true;
+    }
+
+    async function applyPendingChanges() {
+      if (pendingChanges.size === 0) return;
+      const n = pendingChanges.size;
+      const changes = [...pendingChanges.values()].map(p => ({
+        la: p.la, lb: p.lb, relation: p.newRel
+      }));
+      const progressBar = document.getElementById("progressBar");
+      progressBar.hidden = false;
+      try {
+        const res = await fetch(
+          `/api/aspects/${encodeURIComponent(ASPECT_NAME)}/relations/batch`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ changes })
+          }
+        );
+        const json = await res.json().catch(() => ({}));
+        if (res.ok) {
+          pendingChanges.clear();
+          updateBatchButtons();
+          showBatchInferencePanel(n, json.adds || [], json.inferred_adds || [], []);
+          await loadRelations();
+          await loadLevelGraph();
+        } else {
+          // Keep pending selections so the user can deselect the offender and retry.
+          showBatchInferencePanel(n, [], [],
+            json.colls || (json.error ? [json.error] : ["Unknown error"]));
+        }
+      } finally {
+        progressBar.hidden = true;
+      }
+    }
+
+    btnApply.addEventListener("click", applyPendingChanges);
+    btnDiscard.addEventListener("click", discardPendingChanges);
+
+    window.addEventListener("beforeunload", e => {
+      if (pendingChanges.size > 0) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    });
+
     async function loadRelations() {
+      // Clear pending state — the matrix is being fully reloaded
+      pendingChanges.clear();
+      updateBatchButtons();
+
       const res = await fetch(`/api/aspects/${encodeURIComponent(ASPECT_NAME)}/relations`);
       if (!res.ok) return;
       const data = await res.json();
@@ -288,12 +362,12 @@
     function cellTooltip(la, lb) {
       const rel = relCells[`${la}|||${lb}`] || "";
       const relPart = rel === "" ? "?" : rel;
-      return `${la} ${relPart} ${lb} | Click to edit relation. Click again to dismiss.`;
+      return `${la} ${relPart} ${lb} | Click to edit. Apply changes to save.`;
     }
 
     function relCellClass(rel) {
       if (rel === BT || rel === BTE) return "rel-better";  // ≻ ⪰
-      if (rel === EQ)                       return "rel-equal";   // ∼
+      if (rel === EQ)                return "rel-equal";   // ∼
       if (rel === WT || rel === WTE) return "rel-worse";   // ≺ ⪯
       return "rel-unset";
     }
@@ -349,12 +423,12 @@
           const isDiag = la === lb;
           if (isDiag) {
             td.className = "rel-cell rel-diag";
-            td.textContent = EQ;   // ∼ (EQ)
+            td.textContent = EQ;
           } else {
             const rel = relCells[`${la}|||${lb}`] || "";
             td.className = `rel-cell rel-editable ${relCellClass(rel)}`;
             td.title = cellTooltip(la, lb);
-            const sel = makeCellDropdown(td);
+            makeCellDropdown(td);
           }
           tr.appendChild(td);
         });
@@ -364,20 +438,11 @@
       wrapper.appendChild(table);
     }
 
-    function restoreCell(sel) {
-      const td = sel.closest("td");
-      if (!td) return;
-      const la = td.dataset.la;
-      const lb = td.dataset.lb;
-      const rel = relCells[`${la}|||${lb}`] || "";
-      td.textContent = rel;
-      td.className = `rel-cell rel-editable ${relCellClass(rel)}`;
-    }
-
     function makeCellDropdown(td) {
       const la = td.dataset.la;
       const lb = td.dataset.lb;
-      const current = relCells[`${la}|||${lb}`] || "";
+      const cellKey = `${la}|||${lb}`;
+      const originalRel = relCells[cellKey] || "";
 
       td.textContent = "";
       const sel = document.createElement("select");
@@ -386,31 +451,20 @@
         const o = document.createElement("option");
         o.value = opt;
         o.textContent = opt === "" ? "—" : opt;
-        if (opt === current) o.selected = true;
+        if (opt === originalRel) o.selected = true;
         sel.appendChild(o);
       });
 
-      sel.addEventListener("change", async () => {
+      sel.addEventListener("change", () => {
         const newRel = sel.value;
-        const res = await fetch(
-          `/api/aspects/${encodeURIComponent(ASPECT_NAME)}/relations/${encodeURIComponent(la)}/${encodeURIComponent(lb)}`,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ relation: newRel })
-          }
-        );
-        const json = await res.json().catch(() => ({}));
-        if (res.ok) {
-          relCells[`${la}|||${lb}`] = newRel;
-          showInferencePanel(la, newRel, lb, json.adds || [], json.inferred_adds || [], []);
-          // Reload full matrix and graph to reflect any inferred relations
-          await loadRelations();
-          await loadLevelGraph();
+        if (newRel === originalRel) {
+          pendingChanges.delete(cellKey);
+          td.classList.remove("rel-pending");
         } else {
-          showInferencePanel(la, newRel, lb, [], [], json.colls || [json.error] || []);
-          restoreCell(sel);
+          pendingChanges.set(cellKey, { la, lb, newRel, originalRel, sel });
+          td.classList.add("rel-pending");
         }
+        updateBatchButtons();
       });
 
       td.appendChild(sel);
@@ -426,19 +480,19 @@
            + `</details>`;
     }
 
-    function showInferencePanel(la, rel, lb, adds, inferredAdds, colls) {
+    function showBatchInferencePanel(n, adds, inferredAdds, colls) {
       const panel = document.getElementById("inferencePanel");
-      const relLabel = rel === "" ? EM_DASH : rel;
       let inner = "";
       if (colls.length > 0) {
-        inner += `<p class="asp-infer-heading"><strong>Relation not set — collision:</strong> `
-              + `${la} ${relLabel} ${lb}</p>`;
+        inner += `<p class="asp-infer-heading">`
+              + `<strong>Changes not applied — collision detected.</strong> `
+              + `${n} change(s) still pending (highlighted in yellow). `
+              + `Deselect any conflicting change(s) and try again, `
+              + `or click <em>Discard changes</em> to cancel all.</p>`;
         inner += collapsible("Collisions", colls);
         panel.className = "inference-panel asp-infer-coll";
       } else {
-        const verb = rel === "" ? "unset" : "set";
-        inner += `<p class="asp-infer-heading"><strong>Relation ${verb}:</strong> `
-              + `${la} ${relLabel} ${lb}</p>`;
+        inner += `<p class="asp-infer-heading"><strong>${n} change(s) applied.</strong></p>`;
         inner += collapsible("Added to matrix", adds);
         inner += collapsible("Inferred in closure", inferredAdds);
         panel.className = "inference-panel asp-infer-ok";

@@ -202,6 +202,7 @@ The vdcm is stored as a two-level JSON object mirroring the adjacency dict:
 | `PATCH` | `/api/aspects/<name>/levels/<level>` | Update level description |
 | `GET` | `/api/aspects/<name>/relations` | Get relations matrix |
 | `PATCH` | `/api/aspects/<name>/relations/<la>/<lb>` | Set relation |
+| `POST` | `/api/aspects/<name>/relations/batch` | Apply a batch of relation changes atomically; aborts all on collision |
 | `GET` | `/api/aspects/<name>/level-graph` | Level graph for Vis.js |
 | `GET` | `/api/level-descriptions` | All level descriptions |
 | `GET` | `/api/aspects/<name>/vdiff-classification` | Classify VDiffs as non_negative / negative / undecided; `?closure=1` for closure-based classification |
@@ -225,10 +226,11 @@ The vdcm is stored as a two-level JSON object mirroring the adjacency dict:
 | `GET` | `/api/consequence_space` | Full consequence space |
 | `GET` | `/api/dominance-graph` | Dominance graph data |
 
-#### VDIFF formatting helpers
+#### Formatting helpers
 
-`_make_vd(asp, la, lb)`, `_fmt_tokens`, `_fmt_entry`, `_fmt_coll` are module-level helpers shared by `patch_vdiff_relation` and
-`batch_patch_vdiff_relations`. `_make_vd` normalises `la == lb == "*"` to a natural zero-diff VDiff.
+`_make_vd(asp, la, lb)`, `_fmt_tokens`, `_fmt_entry`, `_fmt_coll` are module-level helpers shared by `patch_vdiff_relation` and `batch_patch_vdiff_relations`. `_make_vd` normalises `la == lb == "*"` to a natural zero-diff VDiff.
+
+`_fmt_al_tokens`, `_fmt_al_origin`, `_fmt_al_entry`, `_fmt_al_coll` are the equivalent module-level helpers for aspect level relation endpoints (`patch_relation` and `batch_patch_relations`).
 
 ---
 
@@ -251,12 +253,23 @@ EUDOXA 0.1: Project | Aspects>A1-A2-A3 | Consequences | Value differences
 
 ### Inference panels
 
-Both `/aspects/<name>` and `/vdiff-matrix` show an inference panel after setting or unsetting a relation. Structure:
+Both `/aspects/<name>` and `/vdiff-matrix` show an inference panel after applying changes. Structure:
 
 - Green box (`.asp-infer-ok` / `.vdiff-infer-ok`) for success
 - Red box (`.asp-infer-coll` / `.vdiff-infer-coll`) for collision
 - Collapsible `<details>` sections: "Added to matrix (N)" and "Inferred in closure (N)", collapsed by default
-- No auto-hide timer — panel stays until next relation change or pair switch
+- No auto-hide timer — panel stays until next Apply, Discard, or pair switch
+
+### Aspect detail view (`/aspects/<name>`)
+
+- **Batch apply workflow:** the level relations matrix uses the same pending-changes pattern as the VDiff matrix (see below).
+  Changes are accumulated in a `pendingChanges` Map (keyed by `"la|||lb"`).
+  Pending cells are highlighted amber (class `.rel-pending`).
+  *Apply changes* and *Discard changes* buttons in the section header are disabled until at least one change is pending.
+- Clicking *Apply changes* POSTs all pending changes to `/api/aspects/<name>/relations/batch`.
+  On success the matrix reloads and highlights clear. On collision **pending changes remain highlighted** so the user can deselect the offending relation(s) and retry.
+- `loadRelations()` always clears pending state (matrix is fully replaced on every call).
+- Navigating away with pending changes triggers a `beforeunload` guard.
 
 ### VDiff matrix view (`/vdiff-matrix`)
 
@@ -295,6 +308,7 @@ finally { progressBar.hidden = true; }
 ```
 
 Used on:
+- `/aspects/<name>` — shown during *Apply changes* (`POST /api/aspects/<name>/relations/batch`)
 - `/vdiff-matrix` — shown during *Apply changes* (`POST /api/vdiff-matrix/batch`)
 - `/` — shown during export (`GET /api/export-project`) and during import (`POST /api/project` + `POST /api/project/import`)
 
@@ -404,13 +418,11 @@ extra outer iterations are only needed when Phase 1 adds new entries that create
 
 - `pos`, `zero`, and `non_pos` had a natural-zero bug (returning incorrect results for ◬) that was present in `non_neg` and `neg` too; all five were corrected in the vdcm refactor (branch `refactor/vdcm`).
 
-- **Response time** for Apply changes in `/vdiff-matrix` is dominated by the closure computation. Batch apply (one closure run for all pending changes) is implemented for VDiff relations but not yet for aspect-level relations. Worst-case complexity is O(n⁴) but typical cost is O(d·n³) with d ≈ 2–4. An incremental closure algorithm (O(n²) per relation change) remains a longer-term option.
+- **Response time** for Apply changes in `/vdiff-matrix` and `/aspects/<name>` is dominated by the closure computation. Worst-case complexity is O(n⁴) but typical cost is O(d·n³) with d ≈ 2–4. An incremental closure algorithm (O(n²) per relation change) remains a longer-term option.
 
 ---
 
 ## Planned/pending work
-
-- Add batch set/unset for aspect-level relations (mirrors the vdiff-matrix batch apply)
 
 - Consider incremental closure algorithm to reduce per-apply cost from O(n⁴) to O(n²) per relation
 
