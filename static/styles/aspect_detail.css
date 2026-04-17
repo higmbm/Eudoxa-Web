@@ -320,10 +320,9 @@ button.primary:hover {
 
 /* ── Relation cell colours ───────────────────────────────── */
 
-/* Pending (unsaved) cells — yellow highlight */
+/* Pending (unsaved) cells — dashed amber outline */
 .rel-pending {
-  background: #fffbe6 !important;
-  outline: 2px solid #e6c200;
+  outline: 2px dashed #e6c200;
   outline-offset: -2px;
 }
 

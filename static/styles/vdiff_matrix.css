@@ -129,10 +129,10 @@
   font-family: monospace;
 }
 
-/* ── Pending (unapplied) dropdown ────────────────────────── */
-.vdiff-select.vdiff-pending {
-  background: #ffe082;
-  color: #4e342e;
+/* ── Pending (unapplied) cell ────────────────────────────── */
+.vdiff-cell.vdiff-pending {
+  outline: 2px dashed #e6c200;
+  outline-offset: -2px;
 }
 
 /* ── Disabled batch buttons ──────────────────────────────── */

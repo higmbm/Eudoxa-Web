@@ -264,7 +264,7 @@ Both `/aspects/<name>` and `/vdiff-matrix` show an inference panel after applyin
 
 - **Batch apply workflow:** the level relations matrix uses the same pending-changes pattern as the VDiff matrix (see below).
   Changes are accumulated in a `pendingChanges` Map (keyed by `"la|||lb"`).
-  Pending cells are highlighted amber (class `.rel-pending`).
+  Pending cells show the colour of the newly selected relation plus a dashed amber outline (`#e6c200`, class `.rel-pending` on the `<td>`).
   *Apply changes* and *Discard changes* buttons in the section header are disabled until at least one change is pending.
 - Clicking *Apply changes* POSTs all pending changes to `/api/aspects/<name>/relations/batch`.
   On success the matrix reloads and highlights clear. On collision **pending changes remain highlighted** so the user can deselect the offending relation(s) and retry.
@@ -277,7 +277,7 @@ Both `/aspects/<name>` and `/vdiff-matrix` show an inference panel after applyin
 - Matrix loads immediately on page open and on pair selection change.
 - **Batch apply workflow:** relation dropdowns do not fire API calls immediately.
   Changes are accumulated in a `pendingChanges` Map (keyed by cell coordinates).
-  Pending dropdowns are highlighted amber (`#ffe082`, class `.vdiff-pending`).
+  Pending cells show the colour of the newly selected relation plus a dashed amber outline (`#e6c200`, class `.vdiff-pending` on the `<td>`).
   *Apply changes* and *Discard changes* buttons in the section header are disabled until at least one change is pending.
 - Clicking *Apply changes* POSTs all pending changes to `/api/vdiff-matrix/batch`.
   An indeterminate progress bar (`.progress-bar`) is shown during the request. On success the matrix reloads and highlights clear. On collision **pending changes remain highlighted**
@@ -295,7 +295,7 @@ Both `/aspects/<name>` and `/vdiff-matrix` show an inference panel after applyin
 | Red (`#fce8e6`) | Worse / LT / LTE / FALSE |
 | Off-white (`#f8f8f8`) | Undefined |
 | Grey (`#d8d8d8`) | Diagonal (immutable) |
-| Amber (`#ffe082`) | Pending (changed but not yet applied) |
+| Dashed amber outline (`#e6c200`) | Pending (changed but not yet applied) |
 
 ### Indeterminate progress bar
 

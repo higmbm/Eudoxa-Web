@@ -280,7 +280,7 @@
     function discardPendingChanges() {
       pendingChanges.forEach(p => {
         p.sel.value = p.originalRel;
-        p.sel.closest("td").classList.remove("rel-pending");
+        p.td.className = `rel-cell rel-editable ${relCellClass(p.originalRel)}`;
       });
       pendingChanges.clear();
       updateBatchButtons();
@@ -459,10 +459,10 @@
         const newRel = sel.value;
         if (newRel === originalRel) {
           pendingChanges.delete(cellKey);
-          td.classList.remove("rel-pending");
+          td.className = `rel-cell rel-editable ${relCellClass(originalRel)}`;
         } else {
-          pendingChanges.set(cellKey, { la, lb, newRel, originalRel, sel });
-          td.classList.add("rel-pending");
+          pendingChanges.set(cellKey, { la, lb, newRel, originalRel, sel, td });
+          td.className = `rel-cell rel-editable ${relCellClass(newRel)} rel-pending`;
         }
         updateBatchButtons();
       });

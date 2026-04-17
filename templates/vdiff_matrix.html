@@ -58,7 +58,7 @@
     function discardPendingChanges() {
       pendingChanges.forEach(p => {
         p.sel.value = p.originalOrder;
-        p.sel.classList.remove("vdiff-pending");
+        p.td.className = "vdiff-cell " + orderClass(p.originalOrder);
       });
       pendingChanges.clear();
       updateBatchButtons();
@@ -331,13 +331,13 @@
               if (newOrder === originalOrder) {
                 // Changed back to the committed value — no longer pending
                 pendingChanges.delete(cellKey);
-                sel.classList.remove("vdiff-pending");
+                td.className = "vdiff-cell " + orderClass(originalOrder);
               } else {
                 pendingChanges.set(cellKey, {
                   an1, l1a, l1b, an2, l2a, l2b,
-                  newOrder, originalOrder, sel
+                  newOrder, originalOrder, sel, td
                 });
-                sel.classList.add("vdiff-pending");
+                td.className = "vdiff-cell " + orderClass(newOrder) + " vdiff-pending";
               }
               updateBatchButtons();
             });
