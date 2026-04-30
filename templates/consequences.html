@@ -472,13 +472,8 @@
 
     function getNamedLevelTuples() {
       const named = new Map();
-      const tbody = document.getElementById("consequencesBody");
-      if (!tbody) return named;
-      tbody.querySelectorAll("tr").forEach(tr => {
-        const cells = Array.from(tr.querySelectorAll("td"));
-        if (cells.length < 2) return;
-        const shortName = cells[0].textContent.trim();
-        const key = JSON.stringify(cells.slice(1).map(td => td.textContent.trim()));
+      Object.entries(consNodeData).forEach(([shortName, cons]) => {
+        const key = JSON.stringify(aspectData.map(a => cons.levels[a.name] ?? null));
         named.set(key, shortName);
       });
       return named;
@@ -516,7 +511,13 @@
 
         row.forEach(cell => {
           const td = document.createElement("td");
-          td.textContent = cell;
+          if (cell === null) {
+            td.textContent = "—";
+            td.className = "cons-incomplete";
+            td.title = "No levels defined for this aspect";
+          } else {
+            td.textContent = cell;
+          }
           tr.appendChild(td);
         });
 
@@ -529,14 +530,20 @@
             const select    = container.querySelector(".level-select");
             const textInput = container.querySelector(".level-text");
             const value     = row[i];
-            const exists    = Array.from(select.options).some(o => o.value === value);
-            if (exists) {
-              select.value = value;
+            if (value === null) {
+              // Placeholder — leave blank so user must choose or create a level
+              select.value = "";
               textInput.hidden = true;
             } else {
-              select.value = NEW_LEVEL_SENTINEL;
-              textInput.hidden = false;
-              textInput.value = value;
+              const exists = Array.from(select.options).some(o => o.value === value);
+              if (exists) {
+                select.value = value;
+                textInput.hidden = true;
+              } else {
+                select.value = NEW_LEVEL_SENTINEL;
+                textInput.hidden = false;
+                textInput.value = value;
+              }
             }
           });
           dialog.close();

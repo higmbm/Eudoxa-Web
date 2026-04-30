@@ -1328,13 +1328,13 @@ class EudoxaManager:
     
     def compute_consequence_space(self) -> List:
         """Derive the full consequence space from aspects and their levels.
-        This is always computable from first principles and need not be persisted."""
+        This is always computable from first principles and need not be persisted.
+        Aspects with no levels contribute a single None placeholder so the
+        table remains non-empty while the aspect is being populated."""
         aspects = list(self.aspects.values())
         if not aspects:
             return [Consequence()]
-        level_lists = [list(a.levels.keys()) for a in aspects]
-        if any(len(ll) == 0 for ll in level_lists):
-            return [Consequence()]
+        level_lists = [list(a.levels.keys()) or [None] for a in aspects]
         result = []
         for combo in product(*level_lists):
             c = Consequence({a.name: level for a, level in zip(aspects, combo)})

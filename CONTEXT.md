@@ -225,9 +225,9 @@ The vdcm is stored as a two-level JSON object mirroring the adjacency dict:
 | `GET` | `/api/constants` | Symbol constants for the UI |
 | `GET` | `/api/consequences` | Named consequences table; level cells are `null` (JSON) when incomplete |
 | `POST` | `/api/consequences` | Add consequence |
-| `PATCH` | `/api/consequences/<short_name>` | Set one aspect's level in an existing consequence (existing levels only) |
+| `PATCH` | `/api/consequences/<short_name>` | Set one aspect's level in an existing consequence; creates the level in the aspect if it does not already exist; returns `{ "new_level": true }` when a level was created |
 | `DELETE` | `/api/consequences/<short_name>` | Delete a named consequence |
-| `GET` | `/api/consequence_space` | Full consequence space |
+| `GET` | `/api/consequence_space` | Consequence space; aspects with no levels contribute a `null` placeholder row so the table is never empty; `null` cells are returned as JSON `null` |
 | `GET` | `/api/dominance-graph` | Dominance graph data; returns 409 with `{ error, incomplete: [...] }` if any consequence is incomplete |
 
 #### Formatting helpers
@@ -282,17 +282,21 @@ A named consequence is **incomplete** when at least one aspect has `None` as its
 
 **Detection:** `EudoxaManager.incomplete_consequences` (property) returns `{short_name: [missing_aspect_names]}` for all consequences that have at least one `None` level.
 
-**Completing a consequence:** `EudoxaManager.set_consequence_level(short_name, aspect_name, level)` sets one cell. Validates that the level exists in the aspect and that the update would not create a duplicate consequence.
+**Completing a consequence:** `EudoxaManager.set_consequence_level(short_name, aspect_name, level)` sets one cell. Validates that the level exists in the aspect and that the update would not create a duplicate consequence. The `PATCH /api/consequences/<short_name>` route creates the level in the aspect first if it does not yet exist (mirroring `add_consequence` behaviour), so callers may supply a brand-new level name.
 
 **Uniqueness invariant with None values:** `None` is treated as a distinct value — two consequences with `None` for the same aspect are considered equal for that aspect. A new complete consequence cannot duplicate an existing incomplete one (since `None ≠ any_string`). After `add_aspect`, uniqueness is preserved because previously distinct consequences remain distinct.
 
 **UI behaviour (`/consequences`):**
-- Incomplete cells are shown with an amber background and a `—` placeholder (`.cons-incomplete`). Clicking an incomplete cell opens a dropdown of the aspect's existing levels.
-- On selection, a `PATCH /api/consequences/<name>` call updates the cell in place; the class is removed.
-- If an aspect has no levels yet, clicking the cell shows an explanatory tooltip.
+- Incomplete cells are shown with an amber background and a `—` placeholder (`.cons-incomplete`). Clicking an incomplete cell opens a hybrid dropdown: existing levels of that aspect plus a **New level…** option (the same pattern as the add-consequence form footer). Selecting an existing level commits immediately via `PATCH`; selecting **New level…** reveals a text input — pressing Enter commits the new level name, Escape restores the cell.
+- If `new_level: true` is returned by `PATCH`, `aspectData` is updated in-place and the add-consequence form footer is rebuilt so the new level appears there too.
+- On a successful commit the cell class is removed and `consNodeData` is updated.
 - An amber warning banner (`.incomplete-banner`) above the table reports how many consequences and cells are incomplete.
 - The **Show dominance graph** button is disabled (`disabled` attribute) while any incomplete cells exist; it re-enables automatically once all are resolved.
 - Each consequence row has a **Delete** button. Deletion uses `confirm()` and calls `DELETE /api/consequences/<name>`.
+
+**Consequence space with no-level aspects:** `EudoxaManager.compute_consequence_space` substitutes `[None]` for any aspect that has no levels, so the Cartesian product remains non-empty. The consequence space dialog displays `null` cells as "—" (amber, `.cons-incomplete`). Clicking such a row pre-fills the add-consequence form as usual but leaves the no-levels aspect dropdown at the blank "— select level —" option, prompting the user to choose or create a level.
+
+**Consequence space highlighting:** Named consequences are highlighted in the space dialog by matching each space row against `consNodeData` (keyed by `JSON.stringify(aspectData.map(a => cons.levels[a.name] ?? null))`). This approach correctly handles `null` placeholder values; an earlier DOM-scraping approach using `td.textContent` failed because incomplete cells render "—" via a CSS `::before` pseudo-element and have empty `textContent`.
 
 **Dominance graph guard:** `GET /api/dominance-graph` returns 409 with `{ "error": "...", "incomplete": [...] }` if `mgr.incomplete_consequences` is non-empty. The `/dominance-graph` page does not currently handle this 409 specially — direct navigation with incomplete consequences will show a broken graph. The consequences-page button guard is the primary protection.
 
@@ -371,9 +375,10 @@ Used on:
 ### Button styles
 
 - `.primary` — blue (`#0b5cff`), white text
-- `.danger` — dark red (`#c0392b`), white text; used for Confirm deletion
-- `.btn-stage-delete` — pale red, used on the per-level Delete button in the levels table
+- `.danger` — dark red (`#c0392b`), white text; used for Confirm deletion; defined in `common.css`
+- `.btn-stage-delete` — pale red, used on Delete buttons in the levels table and consequence rows; defined in `common.css`
 - Default — grey (`#f6f6f6`), matches `.header-link-button` exactly
+- `button:disabled` — opacity 0.45, cursor `not-allowed`; defined in `common.css`; applies to all pages
 - `.header-link-button` — `<a>` styled as a button (defined in `common.css`)
 - The *Export project* button on `/` is a real `<button>` (not `<a>`); it downloads via `fetch()` + Blob URL so the progress bar can wrap the entire request
 
@@ -469,8 +474,6 @@ extra outer iterations are only needed when Phase 1 adds new entries that create
 
 ## Known issues
 
-- **Incomplete consequences** — decide on how to handle consequences that are added before first aspect level is added.
-
 - **Aspect reordering via drag-and-drop** in `/` was attempted but deferred.
 
 - `pos`, `zero`, and `non_pos` had a natural-zero bug (returning incorrect results for ◬) that was present in `non_neg` and `neg` too; all five were corrected in the vdcm refactor (branch `refactor/vdcm`).
@@ -483,9 +486,13 @@ extra outer iterations are only needed when Phase 1 adds new entries that create
 
 - Consider incremental closure algorithm to reduce per-apply cost from O(n⁴) to O(n²) per relation
 
+- Add Delete aspect functionality
+
+- Grey out the 'Show dominance graph' button in the case of incomplete consequences in the named consequences table
+
 - Handle incomplete consequences on `/dominance-graph` (direct navigation with incomplete consequences currently shows a broken page; the button guard in `/consequences` is the primary protection)
 
-- Add Delete aspect functionality
+- Transform the "/" view into a 'Project overview' view with no editing, to avoid different views with (partially) overlapping functionality
 
 - Show collection of differences (special view?) and let the user set "undecided" differences as pos/non-neg/zero/non-pos/neg
 

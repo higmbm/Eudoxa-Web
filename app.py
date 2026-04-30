@@ -1039,7 +1039,7 @@ def get_consequence_space():
     rows = []
     for consequence in mgr.consequence_space:
         row = [
-            "" if consequence[a.name] is None else str(consequence[a.name])
+            None if consequence[a.name] is None else str(consequence[a.name])
             for a in aspects
         ]
         rows.append(row)
