@@ -223,10 +223,12 @@ The vdcm is stored as a two-level JSON object mirroring the adjacency dict:
 | Method | Route | Description |
 |---|---|---|
 | `GET` | `/api/constants` | Symbol constants for the UI |
-| `GET` | `/api/consequences` | Named consequences table |
+| `GET` | `/api/consequences` | Named consequences table; level cells are `null` (JSON) when incomplete |
 | `POST` | `/api/consequences` | Add consequence |
+| `PATCH` | `/api/consequences/<short_name>` | Set one aspect's level in an existing consequence (existing levels only) |
+| `DELETE` | `/api/consequences/<short_name>` | Delete a named consequence |
 | `GET` | `/api/consequence_space` | Full consequence space |
-| `GET` | `/api/dominance-graph` | Dominance graph data |
+| `GET` | `/api/dominance-graph` | Dominance graph data; returns 409 with `{ error, incomplete: [...] }` if any consequence is incomplete |
 
 #### Formatting helpers
 
@@ -271,6 +273,28 @@ Both `/aspects/<name>` and `/vdiff-matrix` show an inference panel after applyin
 - Red box (`.asp-infer-coll` / `.vdiff-infer-coll`) for collision
 - Collapsible `<details>` sections: "Added to matrix (N)" and "Inferred in closure (N)", collapsed by default
 - No auto-hide timer — panel stays until next Apply, Discard, or pair switch
+
+### Incomplete consequences
+
+A named consequence is **incomplete** when at least one aspect has `None` as its level value. This arises when a new aspect is added after consequences already exist.
+
+**How incompleteness is introduced:** `EudoxaManager.add_aspect` iterates all existing consequences and sets `consequence.aspect_levels[new_aspect] = None` for each. This makes the incomplete state explicit in the stored data rather than relying on the `__getitem__` None fallback.
+
+**Detection:** `EudoxaManager.incomplete_consequences` (property) returns `{short_name: [missing_aspect_names]}` for all consequences that have at least one `None` level.
+
+**Completing a consequence:** `EudoxaManager.set_consequence_level(short_name, aspect_name, level)` sets one cell. Validates that the level exists in the aspect and that the update would not create a duplicate consequence.
+
+**Uniqueness invariant with None values:** `None` is treated as a distinct value — two consequences with `None` for the same aspect are considered equal for that aspect. A new complete consequence cannot duplicate an existing incomplete one (since `None ≠ any_string`). After `add_aspect`, uniqueness is preserved because previously distinct consequences remain distinct.
+
+**UI behaviour (`/consequences`):**
+- Incomplete cells are shown with an amber background and a `—` placeholder (`.cons-incomplete`). Clicking an incomplete cell opens a dropdown of the aspect's existing levels.
+- On selection, a `PATCH /api/consequences/<name>` call updates the cell in place; the class is removed.
+- If an aspect has no levels yet, clicking the cell shows an explanatory tooltip.
+- An amber warning banner (`.incomplete-banner`) above the table reports how many consequences and cells are incomplete.
+- The **Show dominance graph** button is disabled (`disabled` attribute) while any incomplete cells exist; it re-enables automatically once all are resolved.
+- Each consequence row has a **Delete** button. Deletion uses `confirm()` and calls `DELETE /api/consequences/<name>`.
+
+**Dominance graph guard:** `GET /api/dominance-graph` returns 409 with `{ "error": "...", "incomplete": [...] }` if `mgr.incomplete_consequences` is non-empty. The `/dominance-graph` page does not currently handle this 409 specially — direct navigation with incomplete consequences will show a broken graph. The consequences-page button guard is the primary protection.
 
 ### Delete aspect level (`/aspects/<name>`)
 
@@ -458,6 +482,8 @@ extra outer iterations are only needed when Phase 1 adds new entries that create
 ## Planned/pending work
 
 - Consider incremental closure algorithm to reduce per-apply cost from O(n⁴) to O(n²) per relation
+
+- Handle incomplete consequences on `/dominance-graph` (direct navigation with incomplete consequences currently shows a broken page; the button guard in `/consequences` is the primary protection)
 
 - Add Delete aspect functionality
 

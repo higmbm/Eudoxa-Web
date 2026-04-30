@@ -143,3 +143,43 @@
 #consequencesBody tr.cons-selected td {
   background: #e8f0fe !important;
 }
+
+/* ── Incomplete consequence cell ────────────────────────── */
+td.cons-incomplete {
+  background: #fff8e1 !important;
+  cursor: pointer;
+  min-width: 4rem;
+}
+
+td.cons-incomplete::before {
+  content: "—";
+  color: #b8860b;
+}
+
+td.cons-incomplete:hover {
+  background: #fff0b3 !important;
+}
+
+.completion-select {
+  font-size: 0.95rem;
+  padding: 0.1rem 0.3rem;
+  width: 100%;
+}
+
+/* ── Incomplete consequences warning banner ─────────────── */
+.incomplete-banner {
+  padding: 0.55rem 1rem;
+  background: #fff8e1;
+  border: 1px solid #f0c040;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  color: #6b4c00;
+  margin-bottom: 0.6rem;
+}
+
+/* ── Consequence delete button ──────────────────────────── */
+.cons-actions-cell {
+  text-align: center;
+  white-space: nowrap;
+  width: 1%;
+}

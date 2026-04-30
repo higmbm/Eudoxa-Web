@@ -349,29 +349,6 @@ button.primary:hover {
   width: 1%;
 }
 
-button.btn-stage-delete {
-  font-size: 0.82rem;
-  padding: 0.2rem 0.55rem;
-  color: #7a1a1a;
-  border-color: #e07070;
-  background: #fff5f5;
-}
-
-button.btn-stage-delete:hover {
-  background: #fde8e8;
-}
-
-/* ── Danger button ──────────────────────────────────────────── */
-button.danger {
-  background: #c0392b;
-  border-color: #c0392b;
-  color: white;
-}
-
-button.danger:hover {
-  background: #a93226;
-}
-
 /* ── Delete level staging panel ─────────────────────────────── */
 .delete-staging {
   max-width: 600px;

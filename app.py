@@ -921,6 +921,12 @@ def get_dominance_graph():
     mgr = load_manager_or_400()
     if not mgr.consequences:
         return {"nodes": [], "edges_confirmed": [], "edges_possible": []}, 200
+    incomplete = mgr.incomplete_consequences
+    if incomplete:
+        return {
+            "error": "Some consequences are incomplete.",
+            "incomplete": list(incomplete.keys())
+        }, 409
     try:
         from flask import request as freq
         use_tr = freq.args.get("tr", "1") != "0"
@@ -1010,7 +1016,7 @@ def get_consequences():
     rows = []
     for short_name, consequence in mgr.consequences.items():
         row = [short_name] + [
-            "" if consequence[a.name] is None else str(consequence[a.name])
+            consequence[a.name]   # None if missing, str otherwise
             for a in aspects
         ]
         rows.append(row)
@@ -1039,6 +1045,41 @@ def get_consequence_space():
         rows.append(row)
 
     return {"headers": headers, "rows": rows}, 200
+
+@app.patch("/api/consequences/<short_name>")
+def patch_consequence(short_name):
+    """Set the level for one aspect in an existing named consequence.
+    Creates the level in the aspect if it does not already exist.
+    """
+    mgr  = load_manager_or_400()
+    data = request.get_json(silent=True) or {}
+    aspect_name = data.get("aspect_name", "").strip()
+    level       = data.get("level", "").strip()
+    if not aspect_name or not level:
+        return {"error": "aspect_name and level are required."}, 400
+    if aspect_name not in mgr.aspects:
+        return {"error": f"Aspect '{aspect_name}' not found."}, 400
+    new_level = level not in mgr.aspects[aspect_name].levels
+    if new_level:
+        mgr.add_aspect_level(aspect_name, level, None)
+    try:
+        mgr.set_consequence_level(short_name, aspect_name, level)
+    except ValueError as e:
+        return {"error": str(e)}, 400
+    save_manager(mgr)
+    return {"message": "Consequence updated.", "new_level": new_level}, 200
+
+
+@app.delete("/api/consequences/<short_name>")
+def delete_consequence(short_name):
+    """Delete a named consequence."""
+    mgr = load_manager_or_400()
+    if short_name not in mgr.consequences:
+        return {"error": f"Consequence '{short_name}' not found."}, 404
+    mgr.remove_consequence(short_name)
+    save_manager(mgr)
+    return "", 204
+
 
 @app.post("/api/consequences")
 def add_consequence():

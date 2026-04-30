@@ -330,6 +330,10 @@ class EudoxaManager:
             raise ValueError(f"Aspect '{name}' already exists.")
         data_type = str_to_type(data_type_str)
         self.aspects[name] = Aspect(name, data_type, description)
+        # Mark all existing consequences as incomplete for the new aspect
+        for consequence in self.consequences.values():
+            if name not in consequence.aspect_levels:
+                consequence.aspect_levels[name] = None
         return self.aspects[name]
 
     def get_aspect(self, name: str) -> Aspect:
@@ -472,6 +476,40 @@ class EudoxaManager:
     def remove_consequence(self, short_name: str):
         if short_name in self.consequences:
             del self.consequences[short_name]
+
+    def set_consequence_level(self, short_name: str, aspect_name: str, level: str) -> None:
+        """Set the level for one aspect in a named consequence.
+        Only accepts levels that already exist in the aspect.
+        Raises ValueError if the update would create a duplicate consequence.
+        """
+        if short_name not in self.consequences:
+            raise ValueError(f"Consequence '{short_name}' not found.")
+        if aspect_name not in self.aspects:
+            raise ValueError(f"Aspect '{aspect_name}' not found.")
+        level_str = str(level)
+        if level_str not in self.aspects[aspect_name].levels:
+            raise ValueError(f"Level '{level_str}' not found in aspect '{aspect_name}'.")
+        # Build the updated aspect_levels dict and check uniqueness
+        updated = dict(self.consequences[short_name].aspect_levels)
+        updated[aspect_name] = level_str
+        for other_name, other_cons in self.consequences.items():
+            if other_name == short_name:
+                continue
+            if all(other_cons.aspect_levels.get(a) == updated.get(a) for a in self.aspects):
+                raise ValueError(
+                    f"Setting this level would make '{short_name}' identical to '{other_name}'."
+                )
+        self.consequences[short_name].aspect_levels[aspect_name] = level_str
+
+    @property
+    def incomplete_consequences(self) -> dict:
+        """Return {short_name: [aspect_names_with_None]} for incomplete consequences."""
+        result = {}
+        for name, cons in self.consequences.items():
+            missing = [asp for asp in self.aspects if cons.aspect_levels.get(asp) is None]
+            if missing:
+                result[name] = missing
+        return result
 
     def dom(self, ca: Consequence, cb: Consequence) -> bool:
         # TODO: Error handling
