@@ -18,8 +18,9 @@
     <div class="section-header">
       <h2>Named consequences</h2>
       <button id="btnShowConsequenceSpace">Show consequence space</button>
-      <a href="/dominance-graph" class="header-link-button">Show dominance graph</a>
+      <button id="btnShowDomGraph" class="header-link-button">Show dominance graph</button>
     </div>
+    <p id="incompleteWarning" class="incomplete-banner" hidden></p>
     <table class="data-table consequences-table" id="consequencesTable">
       <thead>
         <tr id="consequencesHeaders"></tr>
@@ -153,7 +154,7 @@
 
     // ── Build / rebuild the consequences table thead + tfoot ───
     function rebuildConsequenceTableStructure() {
-      const colCount = 1 + aspectData.length;
+      const colCount = 2 + aspectData.length; // +1 for delete column
 
       const headersRow = document.getElementById("consequencesHeaders");
       headersRow.innerHTML = "";
@@ -162,6 +163,7 @@
         th.textContent = h;
         headersRow.appendChild(th);
       });
+      headersRow.appendChild(document.createElement("th")); // delete column
 
       const inputsRow = document.querySelector(".add-consequence-inputs");
       inputsRow.innerHTML = "";
@@ -179,6 +181,7 @@
         td.appendChild(buildHybridInput(name, levels));
         inputsRow.appendChild(td);
       });
+      inputsRow.appendChild(document.createElement("td")); // delete column placeholder
 
       document.getElementById("addConsequenceActionCell").colSpan = colCount;
       document.getElementById("addConsequenceNoticeCell").colSpan = colCount;
@@ -197,8 +200,9 @@
       const data = await res.json();
 
       if (!data.rows || data.rows.length === 0) {
-        const colCount = 1 + aspectData.length;
+        const colCount = 2 + aspectData.length;
         tbody.innerHTML = `<tr><td colspan="${colCount}" class="muted">No consequences defined yet.</td></tr>`;
+        checkConsequenceCompleteness();
         return;
       }
 
@@ -207,30 +211,199 @@
       data.rows.forEach(row => {
         const tr = document.createElement("tr");
         const shortName = row[0];
-        // Build consNodeData: {name, levels: {asp: level}}
+
+        // Build consNodeData: {name, levels: {asp: level|null}}
         const levels = {};
-        aspectData.forEach((a, i) => { levels[a.name] = row[i + 1] ?? ""; });
+        aspectData.forEach((a, i) => { levels[a.name] = row[i + 1] ?? null; });
         consNodeData[shortName] = { name: shortName, levels };
-        row.forEach((cell, i) => {
+
+        // Short name cell — click to compare
+        const nameTd = document.createElement("td");
+        const b = document.createElement("strong");
+        b.textContent = shortName;
+        nameTd.appendChild(b);
+        nameTd.style.cursor = "pointer";
+        nameTd.title = "Click to select for comparison";
+        nameTd.addEventListener("click", () => onConsNameClick(shortName, tr));
+        tr.appendChild(nameTd);
+
+        // Level cells
+        aspectData.forEach((a, i) => {
+          const cell = row[i + 1];
           const td = document.createElement("td");
-          if (i === 0) {
-            const b = document.createElement("strong");
-            b.textContent = cell;
-            td.appendChild(b);
-            // Click on name cell selects this consequence for comparison
-            td.style.cursor = "pointer";
-            td.title = "Click to select for comparison";
-            td.addEventListener("click", () => onConsNameClick(shortName, tr));
+          if (cell === null || cell === undefined) {
+            td.className = "cons-incomplete";
+            td.dataset.aspName = a.name;
+            td.title = "Level not set — click to complete";
           } else {
             td.textContent = cell;
-            const aspName = aspectData[i - 1]?.name;
-            const desc = aspName && levelDescs[aspName]?.[cell];
+            const desc = levelDescs[a.name]?.[cell];
             if (desc) td.title = desc;
           }
           tr.appendChild(td);
         });
+
+        // Delete button cell
+        const delTd = document.createElement("td");
+        delTd.className = "cons-actions-cell";
+        const delBtn = document.createElement("button");
+        delBtn.className = "btn-stage-delete";
+        delBtn.textContent = "Delete";
+        delBtn.addEventListener("click", () => deleteConsequence(shortName, tr));
+        delTd.appendChild(delBtn);
+        tr.appendChild(delTd);
+
         tbody.appendChild(tr);
       });
+
+      checkConsequenceCompleteness();
+    }
+
+    // ── Inline completion editor for an incomplete cell ────────
+    function showInlineCompletionEdit(td, shortName, aspectName, tr) {
+      if (td.querySelector("select")) return; // already open
+      const aspect = aspectData.find(a => a.name === aspectName);
+      if (!aspect) return;
+
+      // Container holds select + optional text input (mirrors buildHybridInput)
+      const container = document.createElement("div");
+      container.className = "hybrid-input";
+
+      const sel = document.createElement("select");
+      sel.className = "completion-select";
+      const blank = document.createElement("option");
+      blank.value = ""; blank.textContent = "— select —";
+      sel.appendChild(blank);
+      aspect.levels.forEach(lvl => {
+        const opt = document.createElement("option");
+        opt.value = lvl; opt.textContent = lvl;
+        sel.appendChild(opt);
+      });
+      const newOpt = document.createElement("option");
+      newOpt.value = NEW_LEVEL_SENTINEL;
+      newOpt.textContent = "New level...";
+      sel.appendChild(newOpt);
+
+      const textInput = document.createElement("input");
+      textInput.type = "text";
+      textInput.className = "level-text";
+      textInput.placeholder = "New level value";
+      textInput.hidden = true;
+
+      container.appendChild(sel);
+      container.appendChild(textInput);
+      td.textContent = "";
+      td.appendChild(container);
+      sel.focus();
+
+      function restore() {
+        td.textContent = "";
+        td.className = "cons-incomplete";
+        td.dataset.aspName = aspectName;
+        td.title = "Level not set — click to complete";
+      }
+
+      async function commitLevel(level) {
+        const res = await fetch(`/api/consequences/${encodeURIComponent(shortName)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ aspect_name: aspectName, level })
+        });
+        if (res.ok) {
+          const json = await res.json().catch(() => ({}));
+          if (json.new_level) {
+            const a = aspectData.find(x => x.name === aspectName);
+            if (a && !a.levels.includes(level)) {
+              a.levels.push(level);
+              rebuildConsequenceTableStructure();
+            }
+          }
+          td.textContent = level;
+          td.className = "";
+          td.title = levelDescs[aspectName]?.[level] || "";
+          if (consNodeData[shortName]) consNodeData[shortName].levels[aspectName] = level;
+          checkConsequenceCompleteness();
+        } else {
+          const j = await res.json().catch(() => ({}));
+          alert(j.error || `${res.status} ${res.statusText}`);
+          restore();
+        }
+      }
+
+      sel.addEventListener("change", () => {
+        const isNew = sel.value === NEW_LEVEL_SENTINEL;
+        textInput.hidden = !isNew;
+        if (isNew) { textInput.value = ""; textInput.focus(); }
+        else if (sel.value) commitLevel(sel.value);
+      });
+
+      textInput.addEventListener("keydown", e => {
+        if (e.key === "Enter") {
+          const v = textInput.value.trim();
+          if (v) commitLevel(v);
+        } else if (e.key === "Escape") {
+          restore();
+        }
+      });
+
+      // Restore on blur if focus leaves the container entirely
+      function onBlur() {
+        setTimeout(() => {
+          if (!container.contains(document.activeElement)) restore();
+        }, 150);
+      }
+      sel.addEventListener("blur", onBlur);
+      textInput.addEventListener("blur", onBlur);
+    }
+
+    // ── Delegated click: incomplete consequence cells ──────────
+    document.getElementById("consequencesBody").addEventListener("click", e => {
+      const td = e.target.closest("td.cons-incomplete");
+      if (!td) return;
+      const tr        = td.closest("tr");
+      const shortName = tr.querySelector("strong")?.textContent?.trim();
+      const aspName   = td.dataset.aspName;
+      if (shortName && aspName) showInlineCompletionEdit(td, shortName, aspName, tr);
+    });
+
+    // ── Delete a consequence ───────────────────────────────────
+    async function deleteConsequence(shortName, tr) {
+      if (!confirm(`Delete consequence '${shortName}'?`)) return;
+      const res = await fetch(`/api/consequences/${encodeURIComponent(shortName)}`, {
+        method: "DELETE"
+      });
+      if (res.ok || res.status === 204) {
+        tr.remove();
+        delete consNodeData[shortName];
+        if (consFirstName === shortName) clearConsCompare();
+        checkConsequenceCompleteness();
+      } else {
+        const j = await res.json().catch(() => ({}));
+        alert(j.error || `${res.status} ${res.statusText}`);
+      }
+    }
+
+    // ── Completeness check: warn + gate dominance graph ────────
+    function checkConsequenceCompleteness() {
+      const incompleteCells = document.querySelectorAll("#consequencesBody td.cons-incomplete");
+      const hasIncomplete   = incompleteCells.length > 0;
+      const warning         = document.getElementById("incompleteWarning");
+      const domBtn          = document.getElementById("btnShowDomGraph");
+
+      if (hasIncomplete) {
+        const rows = new Set([...incompleteCells].map(td => td.closest("tr")));
+        warning.textContent =
+          `${rows.size} consequence${rows.size > 1 ? "s are" : " is"} incomplete ` +
+          `(${incompleteCells.length} cell${incompleteCells.length > 1 ? "s" : ""} missing). ` +
+          "Click an empty cell to set a level, or delete the consequence.";
+        warning.hidden = false;
+        domBtn.disabled = true;
+        domBtn.title = "Complete all consequences before viewing the dominance graph.";
+      } else {
+        warning.hidden = true;
+        domBtn.disabled = false;
+        domBtn.title = "";
+      }
     }
 
     // ── Helper: get level value from a hybrid input ────────────
@@ -299,13 +472,8 @@
 
     function getNamedLevelTuples() {
       const named = new Map();
-      const tbody = document.getElementById("consequencesBody");
-      if (!tbody) return named;
-      tbody.querySelectorAll("tr").forEach(tr => {
-        const cells = Array.from(tr.querySelectorAll("td"));
-        if (cells.length < 2) return;
-        const shortName = cells[0].textContent.trim();
-        const key = JSON.stringify(cells.slice(1).map(td => td.textContent.trim()));
+      Object.entries(consNodeData).forEach(([shortName, cons]) => {
+        const key = JSON.stringify(aspectData.map(a => cons.levels[a.name] ?? null));
         named.set(key, shortName);
       });
       return named;
@@ -343,7 +511,13 @@
 
         row.forEach(cell => {
           const td = document.createElement("td");
-          td.textContent = cell;
+          if (cell === null) {
+            td.textContent = "—";
+            td.className = "cons-incomplete";
+            td.title = "No levels defined for this aspect";
+          } else {
+            td.textContent = cell;
+          }
           tr.appendChild(td);
         });
 
@@ -356,14 +530,20 @@
             const select    = container.querySelector(".level-select");
             const textInput = container.querySelector(".level-text");
             const value     = row[i];
-            const exists    = Array.from(select.options).some(o => o.value === value);
-            if (exists) {
-              select.value = value;
+            if (value === null) {
+              // Placeholder — leave blank so user must choose or create a level
+              select.value = "";
               textInput.hidden = true;
             } else {
-              select.value = NEW_LEVEL_SENTINEL;
-              textInput.hidden = false;
-              textInput.value = value;
+              const exists = Array.from(select.options).some(o => o.value === value);
+              if (exists) {
+                select.value = value;
+                textInput.hidden = true;
+              } else {
+                select.value = NEW_LEVEL_SENTINEL;
+                textInput.hidden = false;
+                textInput.value = value;
+              }
             }
           });
           dialog.close();
@@ -559,6 +739,11 @@
       panel.innerHTML = ""; panel.appendChild(table);
       document.getElementById("consCompareSection").hidden = false;
     }
+
+    // ── Dominance graph button ─────────────────────────────────
+    document.getElementById("btnShowDomGraph").addEventListener("click", () => {
+      window.location.href = "/dominance-graph";
+    });
 
     // ── Initial load ───────────────────────────────────────────
     loadAspects().then(loadConsequences);

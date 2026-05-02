@@ -639,6 +639,64 @@ def patch_level(aspect_name, level_name):
     save_manager(mgr)
     return {"message": "Level updated"}, 200
 
+@app.get("/api/aspects/<aspect_name>/levels/<level_name>/delete-preview")
+def delete_level_preview(aspect_name, level_name):
+    """Return a preview of all data that will be removed when an aspect level is deleted."""
+    mgr = load_manager_or_400()
+    try:
+        preview = mgr.stage_remove_aspect_level(aspect_name, level_name)
+    except ValueError as e:
+        return {"error": str(e)}, 404
+    return preview, 200
+
+
+@app.delete("/api/aspects/<aspect_name>/levels/<level_name>")
+def delete_level(aspect_name, level_name):
+    """Delete an aspect level and all associated VDCM entries and consequences."""
+    mgr = load_manager_or_400()
+    try:
+        mgr.confirm_remove_aspect_level(aspect_name, level_name)
+    except ValueError as e:
+        return {"error": str(e)}, 404
+    save_manager(mgr)
+    return {"message": f"Level '{level_name}' deleted."}, 200
+
+
+@app.get("/api/aspects/<aspect_name>/delete-preview")
+def delete_aspect_preview(aspect_name):
+    """Return a preview of all data that will be removed when an aspect is deleted."""
+    mgr = load_manager_or_400()
+    try:
+        preview = mgr.stage_remove_aspect(aspect_name)
+    except ValueError as e:
+        return {"error": str(e)}, 404
+    return preview, 200
+
+
+@app.delete("/api/aspects/<aspect_name>")
+def delete_aspect(aspect_name):
+    """Delete an aspect and all associated data.
+
+    Body: { "keep_consequences": bool }
+    Body: { "consequences": "keep" | "discard_duplicates" | "discard_all" }
+      keep              — strip aspect key; keep one per duplicate group
+      discard_duplicates — strip aspect key; discard every member of any
+                          duplicate group, keep only unique consequences
+      discard_all       — delete all named consequences
+    """
+    mgr = load_manager_or_400()
+    data = request.get_json(silent=True) or {}
+    mode = data.get("consequences", "discard_all")
+    if mode not in ("keep", "discard_duplicates", "discard_all"):
+        return {"error": "consequences must be 'keep', 'discard_duplicates', or 'discard_all'."}, 400
+    try:
+        mgr.confirm_remove_aspect(aspect_name, consequences=mode)
+    except ValueError as e:
+        return {"error": str(e)}, 404
+    save_manager(mgr)
+    return {"message": f"Aspect '{aspect_name}' deleted."}, 200
+
+
 # -----------------------------------------------------------
 #  REST: CONSEQUENCES
 # -----------------------------------------------------------
@@ -898,6 +956,12 @@ def get_dominance_graph():
     mgr = load_manager_or_400()
     if not mgr.consequences:
         return {"nodes": [], "edges_confirmed": [], "edges_possible": []}, 200
+    incomplete = mgr.incomplete_consequences
+    if incomplete:
+        return {
+            "error": "Some consequences are incomplete.",
+            "incomplete": list(incomplete.keys())
+        }, 409
     try:
         from flask import request as freq
         use_tr = freq.args.get("tr", "1") != "0"
@@ -987,7 +1051,7 @@ def get_consequences():
     rows = []
     for short_name, consequence in mgr.consequences.items():
         row = [short_name] + [
-            "" if consequence[a.name] is None else str(consequence[a.name])
+            consequence[a.name]   # None if missing, str otherwise
             for a in aspects
         ]
         rows.append(row)
@@ -1010,12 +1074,47 @@ def get_consequence_space():
     rows = []
     for consequence in mgr.consequence_space:
         row = [
-            "" if consequence[a.name] is None else str(consequence[a.name])
+            None if consequence[a.name] is None else str(consequence[a.name])
             for a in aspects
         ]
         rows.append(row)
 
     return {"headers": headers, "rows": rows}, 200
+
+@app.patch("/api/consequences/<short_name>")
+def patch_consequence(short_name):
+    """Set the level for one aspect in an existing named consequence.
+    Creates the level in the aspect if it does not already exist.
+    """
+    mgr  = load_manager_or_400()
+    data = request.get_json(silent=True) or {}
+    aspect_name = data.get("aspect_name", "").strip()
+    level       = data.get("level", "").strip()
+    if not aspect_name or not level:
+        return {"error": "aspect_name and level are required."}, 400
+    if aspect_name not in mgr.aspects:
+        return {"error": f"Aspect '{aspect_name}' not found."}, 400
+    new_level = level not in mgr.aspects[aspect_name].levels
+    if new_level:
+        mgr.add_aspect_level(aspect_name, level, None)
+    try:
+        mgr.set_consequence_level(short_name, aspect_name, level)
+    except ValueError as e:
+        return {"error": str(e)}, 400
+    save_manager(mgr)
+    return {"message": "Consequence updated.", "new_level": new_level}, 200
+
+
+@app.delete("/api/consequences/<short_name>")
+def delete_consequence(short_name):
+    """Delete a named consequence."""
+    mgr = load_manager_or_400()
+    if short_name not in mgr.consequences:
+        return {"error": f"Consequence '{short_name}' not found."}, 404
+    mgr.remove_consequence(short_name)
+    save_manager(mgr)
+    return "", 204
+
 
 @app.post("/api/consequences")
 def add_consequence():

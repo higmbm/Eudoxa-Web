@@ -341,3 +341,12 @@ button.primary:hover {
 .rel-unset {
   background: #f8f8f8 !important;   /* off-white   — unset */
 }
+
+/* ── Level actions column ───────────────────────────────────── */
+.level-actions-cell {
+  text-align: center;
+  white-space: nowrap;
+  width: 1%;
+}
+
+/* .delete-staging and related rules live in common.css */

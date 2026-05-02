@@ -21,6 +21,7 @@
         <th>Description</th>
         <th>#Levels</th>
         <th>#Δ</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
@@ -31,6 +32,9 @@
         <td class="editable-desc" data-aspect="{{ row.name }}" title="Click to edit description">{{ row.description }}</td>
         <td class="num-cell"><a href="/aspects/{{ row.name }}">{{ row.n_levels }}</a></td>
         <td>{{ row.vdiffs }}</td>
+        <td class="asp-actions-cell">
+          <button class="btn-stage-delete" data-aspect="{{ row.name }}">Delete</button>
+        </td>
       </tr>
       {% endfor %}
     </tbody>
@@ -46,9 +50,10 @@
         </td>
         <td><input id="inputAspectDesc" type="text" placeholder="Optional"></td>
         <td colspan="2" class="add-aspect-computed-cols"></td>
+        <td class="add-aspect-computed-cols"></td>
       </tr>
       <tr class="add-aspect-action">
-        <td colspan="5">
+        <td colspan="6">
           <div class="add-aspect-action-row">
             <span class="action-spacer"></span>
             <button id="btnAddAspect" class="primary">Add aspect</button>
@@ -60,6 +65,166 @@
   </table>
 
   <p id="addAspectError" class="error" hidden></p>
+
+  <div id="deleteAspectStaging" class="delete-staging" hidden>
+    <h3 class="delete-staging-title"></h3>
+    <div id="deleteAspectStagingBody"></div>
+    <div class="delete-staging-actions">
+      <button id="btnAspectReject">Cancel</button>
+      <button id="btnAspectKeep" class="danger">Delete — keep consequences</button>
+      <button id="btnAspectDiscardDups" class="danger">Delete — discard duplicates</button>
+      <button id="btnAspectDiscardAll" class="danger">Delete — discard all consequences</button>
+    </div>
+  </div>
+
+  <script>
+    // ── Delete aspect staging ────────────────────────────────────
+    let pendingDeleteAspect = null;
+
+    function escHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    function listOrNone(items, renderFn) {
+      if (!items || items.length === 0) return "<em>None</em>";
+      return "<ul>" + items.map(i => `<li>${renderFn(i)}</li>`).join("") + "</ul>";
+    }
+
+    async function stageDeleteAspect(aspectName) {
+      const panel = document.getElementById("deleteAspectStaging");
+      const body  = document.getElementById("deleteAspectStagingBody");
+      panel.hidden = true;
+
+      const res = await fetch(`/api/aspects/${encodeURIComponent(aspectName)}/delete-preview`);
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        alert(j.error || `${res.status} ${res.statusText}`);
+        return;
+      }
+      const p = await res.json();
+      pendingDeleteAspect = aspectName;
+
+      panel.querySelector(".delete-staging-title").textContent =
+        `Delete aspect "${aspectName}"`;
+
+      const hasCons  = p.consequence_count > 0;
+      const hasDups  = p.duplicate_groups.length > 0;
+      const keptIfKeep = p.consequence_count - p.discarded_if_keep;
+      const discardedIfDups = p.duplicate_groups.reduce(
+        (n, g) => n + 1 + g.discard.length, 0);  // all members of every group
+      const keptIfDups = p.consequence_count - discardedIfDups;
+
+      let html = "";
+
+      html += `<p><strong>Levels to be removed (${p.levels_removed.length}):</strong></p>`;
+      html += listOrNone(p.levels_removed, escHtml);
+
+      html += `<p><strong>Value differences to be removed (${p.vdiffs_removed.length}):</strong></p>`;
+      html += listOrNone(p.vdiffs_removed, escHtml);
+
+      html += `<p><strong>Aspect level relations to be unset (${p.al_relations_unset.length}):</strong></p>`;
+      html += listOrNone(p.al_relations_unset,
+        r => `${escHtml(r.la)} ${escHtml(r.relation)} ${escHtml(r.lb)}`);
+
+      html += `<p><strong>VDiff comparison entries to be removed (${p.vdcm_entries_removed.length}):</strong></p>`;
+      html += listOrNone(p.vdcm_entries_removed,
+        r => `${escHtml(r.vd1)} ${escHtml(r.relation)} ${escHtml(r.vd2)}`);
+
+      if (hasCons) {
+        html += `<p><strong>Named consequences (${p.consequence_count}):</strong></p>`;
+        if (hasDups) {
+          html += `<p>Removing this aspect creates ${p.duplicate_groups.length} ` +
+                  `duplicate group(s) involving ${discardedIfDups} consequence(s):</p><ul>`;
+          p.duplicate_groups.forEach(g => {
+            const all = [g.keep, ...g.discard].map(escHtml).join(", ");
+            html += `<li>${all} — <em>keep</em> option retains ` +
+                    `<strong>${escHtml(g.keep)}</strong></li>`;
+          });
+          html += `</ul>`;
+          html += `<p><em>Keep:</em> ${keptIfKeep} consequence(s) survive, ` +
+                  `${p.discarded_if_keep} discarded.<br>` +
+                  `<em>Discard duplicates:</em> ${keptIfDups} unique consequence(s) survive, ` +
+                  `${discardedIfDups} discarded.</p>`;
+        } else {
+          html += `<p>No duplicate consequences will arise. ` +
+                  `All ${p.consequence_count} consequence(s) can be kept.</p>`;
+        }
+      } else {
+        html += `<p><strong>Named consequences:</strong> None.</p>`;
+      }
+
+      body.innerHTML = html;
+
+      // Show/hide buttons depending on state
+      const btnKeep     = document.getElementById("btnAspectKeep");
+      const btnDups     = document.getElementById("btnAspectDiscardDups");
+      const btnAll      = document.getElementById("btnAspectDiscardAll");
+
+      if (!hasCons) {
+        // No consequences — simplify to a single confirm button
+        btnKeep.hidden = true;
+        btnDups.hidden = true;
+        btnAll.hidden  = true;
+        let btnConfirm = document.getElementById("btnAspectConfirm");
+        if (!btnConfirm) {
+          btnConfirm = document.createElement("button");
+          btnConfirm.id        = "btnAspectConfirm";
+          btnConfirm.className = "danger";
+          btnConfirm.textContent = "Confirm deletion";
+          btnConfirm.addEventListener("click", () => confirmDeleteAspect("discard_all"));
+          document.querySelector(".delete-staging-actions").appendChild(btnConfirm);
+        }
+        btnConfirm.hidden = false;
+      } else {
+        btnKeep.hidden = false;
+        // "Discard duplicates" is only distinct from "keep" when duplicates exist
+        btnDups.hidden = !hasDups;
+        btnAll.hidden  = false;
+        const btnConfirm = document.getElementById("btnAspectConfirm");
+        if (btnConfirm) btnConfirm.hidden = true;
+      }
+
+      panel.hidden = false;
+      panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    async function confirmDeleteAspect(mode) {
+      if (!pendingDeleteAspect) return;
+      const res = await fetch(
+        `/api/aspects/${encodeURIComponent(pendingDeleteAspect)}`,
+        {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ consequences: mode })
+        }
+      );
+      if (res.ok) {
+        location.reload();
+      } else {
+        const j = await res.json().catch(() => ({}));
+        alert(j.error || `${res.status} ${res.statusText}`);
+      }
+    }
+
+    document.querySelector(".aspects-table tbody").addEventListener("click", e => {
+      const btn = e.target.closest("button.btn-stage-delete");
+      if (!btn) return;
+      stageDeleteAspect(btn.dataset.aspect);
+    });
+
+    document.getElementById("btnAspectReject").addEventListener("click", () => {
+      document.getElementById("deleteAspectStaging").hidden = true;
+      pendingDeleteAspect = null;
+    });
+    document.getElementById("btnAspectKeep").addEventListener("click",
+      () => confirmDeleteAspect("keep"));
+    document.getElementById("btnAspectDiscardDups").addEventListener("click",
+      () => confirmDeleteAspect("discard_duplicates"));
+    document.getElementById("btnAspectDiscardAll").addEventListener("click",
+      () => confirmDeleteAspect("discard_all"));
+  </script>
 
   <script>
     // ── Inline description editing ───────────────────────────────

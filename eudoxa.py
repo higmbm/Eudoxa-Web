@@ -330,6 +330,10 @@ class EudoxaManager:
             raise ValueError(f"Aspect '{name}' already exists.")
         data_type = str_to_type(data_type_str)
         self.aspects[name] = Aspect(name, data_type, description)
+        # Mark all existing consequences as incomplete for the new aspect
+        for consequence in self.consequences.values():
+            if name not in consequence.aspect_levels:
+                consequence.aspect_levels[name] = None
         return self.aspects[name]
 
     def get_aspect(self, name: str) -> Aspect:
@@ -472,6 +476,40 @@ class EudoxaManager:
     def remove_consequence(self, short_name: str):
         if short_name in self.consequences:
             del self.consequences[short_name]
+
+    def set_consequence_level(self, short_name: str, aspect_name: str, level: str) -> None:
+        """Set the level for one aspect in a named consequence.
+        Only accepts levels that already exist in the aspect.
+        Raises ValueError if the update would create a duplicate consequence.
+        """
+        if short_name not in self.consequences:
+            raise ValueError(f"Consequence '{short_name}' not found.")
+        if aspect_name not in self.aspects:
+            raise ValueError(f"Aspect '{aspect_name}' not found.")
+        level_str = str(level)
+        if level_str not in self.aspects[aspect_name].levels:
+            raise ValueError(f"Level '{level_str}' not found in aspect '{aspect_name}'.")
+        # Build the updated aspect_levels dict and check uniqueness
+        updated = dict(self.consequences[short_name].aspect_levels)
+        updated[aspect_name] = level_str
+        for other_name, other_cons in self.consequences.items():
+            if other_name == short_name:
+                continue
+            if all(other_cons.aspect_levels.get(a) == updated.get(a) for a in self.aspects):
+                raise ValueError(
+                    f"Setting this level would make '{short_name}' identical to '{other_name}'."
+                )
+        self.consequences[short_name].aspect_levels[aspect_name] = level_str
+
+    @property
+    def incomplete_consequences(self) -> dict:
+        """Return {short_name: [aspect_names_with_None]} for incomplete consequences."""
+        result = {}
+        for name, cons in self.consequences.items():
+            missing = [asp for asp in self.aspects if cons.aspect_levels.get(asp) is None]
+            if missing:
+                result[name] = missing
+        return result
 
     def dom(self, ca: Consequence, cb: Consequence) -> bool:
         # TODO: Error handling
@@ -749,6 +787,250 @@ class EudoxaManager:
         aspect.add_level(level_str, description)
         # Update the value-difference comparison matrix
         self.expand_vdiff_comparison_matrix(aspect_name)
+
+    def stage_remove_aspect_level(self, aspect_name: str, level: str) -> dict:
+        """Compute the impact of removing a level without committing.
+
+        Returns a dict:
+          vdiffs_removed        — repr strings of VDiffs that will disappear
+          al_relations_unset    — [{la, relation, lb}] for set within-aspect relations
+          vdcm_entries_removed  — [{vd1, relation, vd2}] for non-UNDEFINED cross-aspect
+                                   VDCM entries (excludes NATURAL_ZERO-backed AL relations)
+          consequences_removed  — short names of consequences that will be deleted
+        """
+        if aspect_name not in self.aspects:
+            raise ValueError(f"Aspect '{aspect_name}' does not exist.")
+        aspect = self.aspects[aspect_name]
+        if level not in aspect.levels:
+            raise ValueError(f"Level '{level}' does not exist in aspect '{aspect_name}'.")
+
+        vdiffs_to_remove = [vd for vd in aspect.vdiffs
+                            if vd.from_level == level or vd.to_level == level]
+        vdiff_keys = {_vdiff_key(vd) for vd in vdiffs_to_remove}
+
+        # Within-aspect AL relations being unset
+        al_relations = []
+        for other in aspect.levels:
+            if other == level:
+                continue
+            rel = self.get_aspect_level_relation(aspect_name, level, other)
+            if rel not in (UNDEFINED,) and rel is not NotImplemented:
+                al_relations.append({"la": level, "relation": rel, "lb": other})
+
+        # Cross-aspect VDCM entries being removed (exclude NATURAL_ZERO and other
+        # deleted VDiffs since those are already covered by al_relations_unset)
+        vdcm_entries = []
+        vdcm = self.vdiff_comparison_matrix
+        seen = set()
+        for k1 in vdiff_keys:
+            row = vdcm.get(k1, {})
+            for k2, rel in row.items():
+                if rel == UNDEFINED or k2 == NATURAL_ZERO or k2 in vdiff_keys:
+                    continue
+                pair = (repr(k1), repr(k2))
+                if pair not in seen:
+                    seen.add(pair)
+                    vdcm_entries.append({"vd1": repr(k1), "relation": rel, "vd2": repr(k2)})
+        for k_other, row in vdcm.items():
+            if k_other in vdiff_keys or k_other == NATURAL_ZERO:
+                continue
+            for k1 in vdiff_keys:
+                rel = row.get(k1, UNDEFINED)
+                if rel == UNDEFINED:
+                    continue
+                pair = (repr(k_other), repr(k1))
+                if pair not in seen:
+                    seen.add(pair)
+                    vdcm_entries.append({"vd1": repr(k_other), "relation": rel, "vd2": repr(k1)})
+
+        consequences_removed = [
+            name for name, cons in self.consequences.items()
+            if cons[aspect_name] == level
+        ]
+
+        return {
+            "vdiffs_removed":       [repr(vd) for vd in vdiffs_to_remove],
+            "al_relations_unset":   al_relations,
+            "vdcm_entries_removed": vdcm_entries,
+            "consequences_removed": consequences_removed,
+        }
+
+    def confirm_remove_aspect_level(self, aspect_name: str, level: str):
+        """Remove an aspect level and all associated VDCM entries and consequences."""
+        if aspect_name not in self.aspects:
+            raise ValueError(f"Aspect '{aspect_name}' does not exist.")
+        aspect = self.aspects[aspect_name]
+        if level not in aspect.levels:
+            raise ValueError(f"Level '{level}' does not exist in aspect '{aspect_name}'.")
+
+        vdiffs_to_remove = [vd for vd in aspect.vdiffs
+                            if vd.from_level == level or vd.to_level == level]
+        vdiff_keys = {_vdiff_key(vd) for vd in vdiffs_to_remove}
+
+        # Remove VDCM rows and columns for the deleted VDiffs
+        vdcm = self.vdiff_comparison_matrix
+        for k in list(vdiff_keys):
+            vdcm.pop(k, None)
+        for row in vdcm.values():
+            for k in list(vdiff_keys):
+                row.pop(k, None)
+
+        # Remove level from aspect
+        del aspect.levels[level]
+        aspect.vdiffs = [vd for vd in aspect.vdiffs
+                         if vd.from_level != level and vd.to_level != level]
+
+        # Remove consequences that use this level
+        to_delete = [name for name, cons in self.consequences.items()
+                     if cons[aspect_name] == level]
+        for name in to_delete:
+            del self.consequences[name]
+
+    def stage_remove_aspect(self, aspect_name: str) -> dict:
+        """Compute the impact of removing an entire aspect without committing.
+
+        Returns a dict:
+          levels_removed        — level names
+          vdiffs_removed        — repr strings of all VDiffs for this aspect
+          al_relations_unset    — [{la, relation, lb}] for set within-aspect relations
+          vdcm_entries_removed  — [{vd1, relation, vd2}] for non-UNDEFINED cross-aspect
+                                   VDCM entries involving this aspect's VDiffs
+          consequence_count     — total number of named consequences
+          duplicate_groups      — [{keep, discard}] groups where removal causes duplicates
+          discarded_if_keep     — number of consequences dropped under "keep" option
+        """
+        if aspect_name not in self.aspects:
+            raise ValueError(f"Aspect '{aspect_name}' does not exist.")
+        aspect = self.aspects[aspect_name]
+
+        levels_removed = list(aspect.levels.keys())
+        vdiff_keys = {_vdiff_key(vd) for vd in aspect.vdiffs
+                      if _vdiff_key(vd) != NATURAL_ZERO}
+
+        # Within-aspect AL relations that are set
+        al_relations = []
+        seen_al = set()
+        for la in aspect.levels:
+            for lb in aspect.levels:
+                if la == lb:
+                    continue
+                rel = self.get_aspect_level_relation(aspect_name, la, lb)
+                if rel not in (UNDEFINED,) and rel is not NotImplemented:
+                    pair = (la, lb)
+                    if pair not in seen_al:
+                        seen_al.add(pair)
+                        al_relations.append({"la": la, "relation": rel, "lb": lb})
+
+        # Non-UNDEFINED cross-aspect VDCM entries involving this aspect's VDiffs
+        vdcm = self.vdiff_comparison_matrix
+        vdcm_entries = []
+        seen_vdcm = set()
+        for k1 in vdiff_keys:
+            for k2, rel in vdcm.get(k1, {}).items():
+                if rel == UNDEFINED or k2 in vdiff_keys:
+                    continue
+                pair = (repr(k1), repr(k2))
+                if pair not in seen_vdcm:
+                    seen_vdcm.add(pair)
+                    vdcm_entries.append({"vd1": repr(k1), "relation": rel, "vd2": repr(k2)})
+        for k_other, row in vdcm.items():
+            if k_other in vdiff_keys:
+                continue
+            for k1 in vdiff_keys:
+                rel = row.get(k1, UNDEFINED)
+                if rel == UNDEFINED:
+                    continue
+                pair = (repr(k_other), repr(k1))
+                if pair not in seen_vdcm:
+                    seen_vdcm.add(pair)
+                    vdcm_entries.append({"vd1": repr(k_other), "relation": rel, "vd2": repr(k1)})
+
+        # Duplicate groups after removing the aspect key from all consequences
+        from collections import defaultdict
+        groups: dict = defaultdict(list)
+        remaining_aspects = [a for a in self.aspects if a != aspect_name]
+        for short_name, cons in self.consequences.items():
+            key = tuple(cons.aspect_levels.get(a) for a in remaining_aspects)
+            groups[key].append(short_name)
+
+        duplicate_groups = []
+        for names in groups.values():
+            if len(names) > 1:
+                names_sorted = sorted(names)
+                duplicate_groups.append({
+                    "keep":    names_sorted[0],
+                    "discard": names_sorted[1:],
+                })
+
+        discarded_if_keep = sum(len(g["discard"]) for g in duplicate_groups)
+
+        return {
+            "levels_removed":        levels_removed,
+            "vdiffs_removed":        [repr(vd) for vd in aspect.vdiffs
+                                      if _vdiff_key(vd) != NATURAL_ZERO],
+            "al_relations_unset":    al_relations,
+            "vdcm_entries_removed":  vdcm_entries,
+            "consequence_count":     len(self.consequences),
+            "duplicate_groups":      duplicate_groups,
+            "discarded_if_keep":     discarded_if_keep,
+        }
+
+    def confirm_remove_aspect(self, aspect_name: str, consequences: str) -> None:
+        """Remove an aspect and all associated data.
+
+        consequences — one of:
+          "keep"              strip aspect key, keep one per duplicate group
+                              (lexicographically first short name)
+          "discard_duplicates" strip aspect key, discard every member of any
+                              duplicate group, keep only unique consequences
+          "discard_all"       delete all named consequences
+        """
+        if aspect_name not in self.aspects:
+            raise ValueError(f"Aspect '{aspect_name}' does not exist.")
+        aspect = self.aspects[aspect_name]
+        vdiff_keys = {_vdiff_key(vd) for vd in aspect.vdiffs
+                      if _vdiff_key(vd) != NATURAL_ZERO}
+
+        # Remove VDCM rows and columns for this aspect's VDiffs
+        vdcm = self.vdiff_comparison_matrix
+        for k in list(vdiff_keys):
+            vdcm.pop(k, None)
+        for row in vdcm.values():
+            for k in list(vdiff_keys):
+                row.pop(k, None)
+
+        # Remove aspect from model
+        del self.aspects[aspect_name]
+
+        if consequences == "discard_all":
+            self.consequences.clear()
+            return
+
+        # Strip aspect key from every consequence
+        for cons in self.consequences.values():
+            cons.aspect_levels.pop(aspect_name, None)
+
+        # Group by remaining tuple to find duplicates
+        from collections import defaultdict
+        remaining_aspects = list(self.aspects.keys())
+        groups: dict = defaultdict(list)
+        for short_name, cons in self.consequences.items():
+            key = tuple(cons.aspect_levels.get(a) for a in remaining_aspects)
+            groups[key].append(short_name)
+
+        to_delete = set()
+        for names in groups.values():
+            if len(names) > 1:
+                if consequences == "discard_duplicates":
+                    # Discard every member of the duplicate group
+                    to_delete.update(names)
+                else:  # "keep"
+                    # Discard all but the lexicographically first
+                    for name in sorted(names)[1:]:
+                        to_delete.add(name)
+
+        for name in to_delete:
+            del self.consequences[name]
 
     def set_aspect_level_relation(self, aspect: str, la, lb, rel: str) -> Tuple:
         adds, colls = [], []
@@ -1192,13 +1474,13 @@ class EudoxaManager:
     
     def compute_consequence_space(self) -> List:
         """Derive the full consequence space from aspects and their levels.
-        This is always computable from first principles and need not be persisted."""
+        This is always computable from first principles and need not be persisted.
+        Aspects with no levels contribute a single None placeholder so the
+        table remains non-empty while the aspect is being populated."""
         aspects = list(self.aspects.values())
         if not aspects:
             return [Consequence()]
-        level_lists = [list(a.levels.keys()) for a in aspects]
-        if any(len(ll) == 0 for ll in level_lists):
-            return [Consequence()]
+        level_lists = [list(a.levels.keys()) or [None] for a in aspects]
         result = []
         for combo in product(*level_lists):
             c = Consequence({a.name: level for a, level in zip(aspects, combo)})

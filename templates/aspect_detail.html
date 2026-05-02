@@ -33,6 +33,7 @@
       <tr>
         <th>Level</th>
         <th>Description</th>
+        <th></th>
       </tr>
     </thead>
     <tbody id="levelsBody">
@@ -43,19 +44,23 @@
           <td class="editable-desc"
               data-level="{{ row.level }}"
               title="Click to edit description">{{ row.description }}</td>
+          <td class="level-actions-cell">
+            <button class="btn-stage-delete" data-level="{{ row.level }}">Delete</button>
+          </td>
         </tr>
         {% endfor %}
       {% else %}
-        <tr><td colspan="2" class="muted">No levels defined yet.</td></tr>
+        <tr><td colspan="3" class="muted">No levels defined yet.</td></tr>
       {% endif %}
     </tbody>
     <tfoot class="add-level-foot">
       <tr class="add-level-inputs">
         <td><input id="inputLevel" type="text" placeholder="e.g. High"></td>
         <td><input id="inputLevelDesc" type="text" placeholder="Optional"></td>
+        <td></td>
       </tr>
       <tr class="add-level-action">
-        <td colspan="2">
+        <td colspan="3">
           <div class="add-level-action-row">
             <span class="action-spacer"></span>
             <button id="btnAddLevel" class="primary">Add level</button>
@@ -67,6 +72,16 @@
   </table>
 
   <p id="addLevelFeedback" hidden data-aspect="{{ aspect_name }}"></p>
+
+  <!-- ── Delete level staging panel ──────────────────────────── -->
+  <div id="deleteLevelStaging" class="delete-staging" hidden>
+    <p class="delete-staging-title">Stage level <strong id="deleteStagingLevelName"></strong> for deletion</p>
+    <div id="deleteStagingPreview"></div>
+    <div class="delete-staging-actions">
+      <button id="btnConfirmDelete" class="danger">Confirm deletion</button>
+      <button id="btnCancelDelete">Cancel</button>
+    </div>
+  </div>
 
   <!-- ── Level relations ──────────────────────────────────────── -->
   <div class="section-header">
@@ -237,6 +252,16 @@
         descTd.title = "Click to edit description";
         const levelUrl = `/api/aspects/${encodeURIComponent(ASPECT_NAME)}/levels/${encodeURIComponent(level)}`;
         tr.appendChild(descTd);
+
+        const actionsTd = document.createElement("td");
+        actionsTd.className = "level-actions-cell";
+        const delBtn = document.createElement("button");
+        delBtn.className = "btn-stage-delete";
+        delBtn.dataset.level = level;
+        delBtn.textContent = "Delete";
+        actionsTd.appendChild(delBtn);
+        tr.appendChild(actionsTd);
+
         tbody.appendChild(tr);
         attachDescEdit(descTd, levelUrl);
         clearLevelForm();
@@ -254,6 +279,99 @@
         feedbackEl.hidden = false;
       }
     });
+
+    // ── Add delete button to newly added rows ────────────────────
+    // (rows already in the DOM at page-load get their buttons from the template;
+    //  rows appended dynamically by "Add level" need the button attached here)
+    const origAddLevel = btnAddLevel.onclick;
+    document.getElementById("levelsBody").addEventListener("click", e => {
+      const btn = e.target.closest(".btn-stage-delete");
+      if (btn) stageDelete(btn.dataset.level);
+    });
+
+    // ── Delete level staging ─────────────────────────────────────
+    let stagedLevel = null;
+    const stagingPanel  = document.getElementById("deleteLevelStaging");
+    const stagingTitle  = document.getElementById("deleteStagingLevelName");
+    const stagingPreview = document.getElementById("deleteStagingPreview");
+
+    async function stageDelete(level) {
+      const url = `/api/aspects/${encodeURIComponent(ASPECT_NAME)}/levels/${encodeURIComponent(level)}/delete-preview`;
+      let preview;
+      try {
+        const res = await fetch(url);
+        preview = await res.json();
+        if (!res.ok) { alert(preview.error || `${res.status} ${res.statusText}`); return; }
+      } catch (err) {
+        alert(`Network error: ${err}`); return;
+      }
+
+      stagedLevel = level;
+      stagingTitle.textContent = level;
+
+      const parts = [];
+
+      if (preview.vdiffs_removed && preview.vdiffs_removed.length) {
+        const vdList = preview.vdiffs_removed.join(", ");
+        parts.push(`<p><strong>Value differences to be removed:</strong> ${escHtml(vdList)}</p>`);
+      }
+
+      if (preview.al_relations_unset && preview.al_relations_unset.length) {
+        const items = preview.al_relations_unset
+          .map(r => `<li>${escHtml(r.la)} ${escHtml(r.relation)} ${escHtml(r.lb)}</li>`)
+          .join("");
+        parts.push(`<p><strong>Aspect level relations to be unset:</strong></p><ul>${items}</ul>`);
+      }
+
+      if (preview.vdcm_entries_removed && preview.vdcm_entries_removed.length) {
+        const items = preview.vdcm_entries_removed
+          .map(e => `<li>${escHtml(e.vd1)} ${escHtml(e.relation)} ${escHtml(e.vd2)}</li>`)
+          .join("");
+        parts.push(`<p><strong>VDCM entries to be removed:</strong></p><ul>${items}</ul>`);
+      }
+
+      if (preview.consequences_removed && preview.consequences_removed.length) {
+        const list = preview.consequences_removed.map(escHtml).join(", ");
+        parts.push(`<p><strong>Consequences to be removed:</strong> ${list}</p>`);
+      }
+
+      if (!parts.length) {
+        parts.push(`<p class="muted">No relations or consequences are affected.</p>`);
+      }
+
+      stagingPreview.innerHTML = parts.join("");
+      stagingPanel.hidden = false;
+      stagingPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    function escHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    document.getElementById("btnCancelDelete").addEventListener("click", () => {
+      stagedLevel = null;
+      stagingPanel.hidden = true;
+    });
+
+    document.getElementById("btnConfirmDelete").addEventListener("click", async () => {
+      if (!stagedLevel) return;
+      const url = `/api/aspects/${encodeURIComponent(ASPECT_NAME)}/levels/${encodeURIComponent(stagedLevel)}`;
+      try {
+        const res = await fetch(url, { method: "DELETE" });
+        if (res.ok) {
+          location.reload();
+        } else {
+          const j = await res.json().catch(() => ({}));
+          alert(j.error || `${res.status} ${res.statusText}`);
+        }
+      } catch (err) {
+        alert(`Network error: ${err}`);
+      }
+    });
+
     // ── Level relations matrix ───────────────────────────────────
     let relLevels        = [];
     let relDescriptions  = {};
