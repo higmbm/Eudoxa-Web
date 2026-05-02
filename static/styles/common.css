@@ -260,3 +260,40 @@ button.danger {
 button.danger:hover {
   background: #a93226;
 }
+
+/* ── Delete staging panel (shared by aspect_detail and aspects) ─ */
+.delete-staging {
+  max-width: 600px;
+  margin-top: 0.75rem;
+  padding: 0.8rem 1rem;
+  background: #fff8f0;
+  border: 1px solid #e6a020;
+  border-radius: 6px;
+  font-size: 0.92rem;
+}
+
+.delete-staging-title {
+  margin: 0 0 0.6rem;
+  font-size: 1rem;
+}
+
+.delete-staging ul {
+  margin: 0.2rem 0 0.6rem 1.4rem;
+  padding: 0;
+}
+
+.delete-staging li {
+  font-family: monospace;
+  font-size: 0.85rem;
+  margin: 0.1rem 0;
+}
+
+.delete-staging p {
+  margin: 0.4rem 0;
+}
+
+.delete-staging-actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.8rem;
+}

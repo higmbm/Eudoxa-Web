@@ -886,6 +886,152 @@ class EudoxaManager:
         for name in to_delete:
             del self.consequences[name]
 
+    def stage_remove_aspect(self, aspect_name: str) -> dict:
+        """Compute the impact of removing an entire aspect without committing.
+
+        Returns a dict:
+          levels_removed        — level names
+          vdiffs_removed        — repr strings of all VDiffs for this aspect
+          al_relations_unset    — [{la, relation, lb}] for set within-aspect relations
+          vdcm_entries_removed  — [{vd1, relation, vd2}] for non-UNDEFINED cross-aspect
+                                   VDCM entries involving this aspect's VDiffs
+          consequence_count     — total number of named consequences
+          duplicate_groups      — [{keep, discard}] groups where removal causes duplicates
+          discarded_if_keep     — number of consequences dropped under "keep" option
+        """
+        if aspect_name not in self.aspects:
+            raise ValueError(f"Aspect '{aspect_name}' does not exist.")
+        aspect = self.aspects[aspect_name]
+
+        levels_removed = list(aspect.levels.keys())
+        vdiff_keys = {_vdiff_key(vd) for vd in aspect.vdiffs
+                      if _vdiff_key(vd) != NATURAL_ZERO}
+
+        # Within-aspect AL relations that are set
+        al_relations = []
+        seen_al = set()
+        for la in aspect.levels:
+            for lb in aspect.levels:
+                if la == lb:
+                    continue
+                rel = self.get_aspect_level_relation(aspect_name, la, lb)
+                if rel not in (UNDEFINED,) and rel is not NotImplemented:
+                    pair = (la, lb)
+                    if pair not in seen_al:
+                        seen_al.add(pair)
+                        al_relations.append({"la": la, "relation": rel, "lb": lb})
+
+        # Non-UNDEFINED cross-aspect VDCM entries involving this aspect's VDiffs
+        vdcm = self.vdiff_comparison_matrix
+        vdcm_entries = []
+        seen_vdcm = set()
+        for k1 in vdiff_keys:
+            for k2, rel in vdcm.get(k1, {}).items():
+                if rel == UNDEFINED or k2 in vdiff_keys:
+                    continue
+                pair = (repr(k1), repr(k2))
+                if pair not in seen_vdcm:
+                    seen_vdcm.add(pair)
+                    vdcm_entries.append({"vd1": repr(k1), "relation": rel, "vd2": repr(k2)})
+        for k_other, row in vdcm.items():
+            if k_other in vdiff_keys:
+                continue
+            for k1 in vdiff_keys:
+                rel = row.get(k1, UNDEFINED)
+                if rel == UNDEFINED:
+                    continue
+                pair = (repr(k_other), repr(k1))
+                if pair not in seen_vdcm:
+                    seen_vdcm.add(pair)
+                    vdcm_entries.append({"vd1": repr(k_other), "relation": rel, "vd2": repr(k1)})
+
+        # Duplicate groups after removing the aspect key from all consequences
+        from collections import defaultdict
+        groups: dict = defaultdict(list)
+        remaining_aspects = [a for a in self.aspects if a != aspect_name]
+        for short_name, cons in self.consequences.items():
+            key = tuple(cons.aspect_levels.get(a) for a in remaining_aspects)
+            groups[key].append(short_name)
+
+        duplicate_groups = []
+        for names in groups.values():
+            if len(names) > 1:
+                names_sorted = sorted(names)
+                duplicate_groups.append({
+                    "keep":    names_sorted[0],
+                    "discard": names_sorted[1:],
+                })
+
+        discarded_if_keep = sum(len(g["discard"]) for g in duplicate_groups)
+
+        return {
+            "levels_removed":        levels_removed,
+            "vdiffs_removed":        [repr(vd) for vd in aspect.vdiffs
+                                      if _vdiff_key(vd) != NATURAL_ZERO],
+            "al_relations_unset":    al_relations,
+            "vdcm_entries_removed":  vdcm_entries,
+            "consequence_count":     len(self.consequences),
+            "duplicate_groups":      duplicate_groups,
+            "discarded_if_keep":     discarded_if_keep,
+        }
+
+    def confirm_remove_aspect(self, aspect_name: str, consequences: str) -> None:
+        """Remove an aspect and all associated data.
+
+        consequences — one of:
+          "keep"              strip aspect key, keep one per duplicate group
+                              (lexicographically first short name)
+          "discard_duplicates" strip aspect key, discard every member of any
+                              duplicate group, keep only unique consequences
+          "discard_all"       delete all named consequences
+        """
+        if aspect_name not in self.aspects:
+            raise ValueError(f"Aspect '{aspect_name}' does not exist.")
+        aspect = self.aspects[aspect_name]
+        vdiff_keys = {_vdiff_key(vd) for vd in aspect.vdiffs
+                      if _vdiff_key(vd) != NATURAL_ZERO}
+
+        # Remove VDCM rows and columns for this aspect's VDiffs
+        vdcm = self.vdiff_comparison_matrix
+        for k in list(vdiff_keys):
+            vdcm.pop(k, None)
+        for row in vdcm.values():
+            for k in list(vdiff_keys):
+                row.pop(k, None)
+
+        # Remove aspect from model
+        del self.aspects[aspect_name]
+
+        if consequences == "discard_all":
+            self.consequences.clear()
+            return
+
+        # Strip aspect key from every consequence
+        for cons in self.consequences.values():
+            cons.aspect_levels.pop(aspect_name, None)
+
+        # Group by remaining tuple to find duplicates
+        from collections import defaultdict
+        remaining_aspects = list(self.aspects.keys())
+        groups: dict = defaultdict(list)
+        for short_name, cons in self.consequences.items():
+            key = tuple(cons.aspect_levels.get(a) for a in remaining_aspects)
+            groups[key].append(short_name)
+
+        to_delete = set()
+        for names in groups.values():
+            if len(names) > 1:
+                if consequences == "discard_duplicates":
+                    # Discard every member of the duplicate group
+                    to_delete.update(names)
+                else:  # "keep"
+                    # Discard all but the lexicographically first
+                    for name in sorted(names)[1:]:
+                        to_delete.add(name)
+
+        for name in to_delete:
+            del self.consequences[name]
+
     def set_aspect_level_relation(self, aspect: str, la, lb, rel: str) -> Tuple:
         adds, colls = [], []
         a = self.get_aspect(aspect)

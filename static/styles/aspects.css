@@ -41,6 +41,13 @@
   flex: 1;
 }
 
+/* ── Aspect delete button column ───────────────────────────── */
+.asp-actions-cell {
+  text-align: center;
+  white-space: nowrap;
+  width: 1%;
+}
+
 /* ── Button colours (mirrors index.css) ────────────────────── */
 button.primary {
   background: #0b5cff;

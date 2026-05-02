@@ -662,6 +662,41 @@ def delete_level(aspect_name, level_name):
     return {"message": f"Level '{level_name}' deleted."}, 200
 
 
+@app.get("/api/aspects/<aspect_name>/delete-preview")
+def delete_aspect_preview(aspect_name):
+    """Return a preview of all data that will be removed when an aspect is deleted."""
+    mgr = load_manager_or_400()
+    try:
+        preview = mgr.stage_remove_aspect(aspect_name)
+    except ValueError as e:
+        return {"error": str(e)}, 404
+    return preview, 200
+
+
+@app.delete("/api/aspects/<aspect_name>")
+def delete_aspect(aspect_name):
+    """Delete an aspect and all associated data.
+
+    Body: { "keep_consequences": bool }
+    Body: { "consequences": "keep" | "discard_duplicates" | "discard_all" }
+      keep              — strip aspect key; keep one per duplicate group
+      discard_duplicates — strip aspect key; discard every member of any
+                          duplicate group, keep only unique consequences
+      discard_all       — delete all named consequences
+    """
+    mgr = load_manager_or_400()
+    data = request.get_json(silent=True) or {}
+    mode = data.get("consequences", "discard_all")
+    if mode not in ("keep", "discard_duplicates", "discard_all"):
+        return {"error": "consequences must be 'keep', 'discard_duplicates', or 'discard_all'."}, 400
+    try:
+        mgr.confirm_remove_aspect(aspect_name, consequences=mode)
+    except ValueError as e:
+        return {"error": str(e)}, 404
+    save_manager(mgr)
+    return {"message": f"Aspect '{aspect_name}' deleted."}, 200
+
+
 # -----------------------------------------------------------
 #  REST: CONSEQUENCES
 # -----------------------------------------------------------

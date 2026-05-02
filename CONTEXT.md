@@ -202,6 +202,8 @@ The vdcm is stored as a two-level JSON object mirroring the adjacency dict:
 | `PATCH` | `/api/aspects/<name>/levels/<level>` | Update level description |
 | `GET` | `/api/aspects/<name>/levels/<level>/delete-preview` | Return deletion impact (VDiffs, AL relations, VDCM entries, consequences) without committing |
 | `DELETE` | `/api/aspects/<name>/levels/<level>` | Delete aspect level and all associated data |
+| `GET` | `/api/aspects/<name>/delete-preview` | Return deletion impact for entire aspect without committing |
+| `DELETE` | `/api/aspects/<name>` | Delete aspect; body `{ "consequences": "keep" \| "discard_duplicates" \| "discard_all" }` |
 | `GET` | `/api/aspects/<name>/relations` | Get relations matrix |
 | `PATCH` | `/api/aspects/<name>/relations/<la>/<lb>` | Set relation |
 | `POST` | `/api/aspects/<name>/relations/batch` | Apply a batch of relation changes atomically; aborts all on collision |
@@ -298,7 +300,7 @@ A named consequence is **incomplete** when at least one aspect has `None` as its
 
 **Consequence space highlighting:** Named consequences are highlighted in the space dialog by matching each space row against `consNodeData` (keyed by `JSON.stringify(aspectData.map(a => cons.levels[a.name] ?? null))`). This approach correctly handles `null` placeholder values; an earlier DOM-scraping approach using `td.textContent` failed because incomplete cells render "—" via a CSS `::before` pseudo-element and have empty `textContent`.
 
-**Dominance graph guard:** `GET /api/dominance-graph` returns 409 with `{ "error": "...", "incomplete": [...] }` if `mgr.incomplete_consequences` is non-empty. The `/dominance-graph` page does not currently handle this 409 specially — direct navigation with incomplete consequences will show a broken graph. The consequences-page button guard is the primary protection.
+**Dominance graph guard:** `GET /api/dominance-graph` returns 409 with `{ "error": "...", "incomplete": [...] }` if `mgr.incomplete_consequences` is non-empty. The `/dominance-graph` page handles non-OK responses generically, displaying `errData.error` as an inline error message, so direct navigation with incomplete consequences shows a clean "Some consequences are incomplete." message. The consequences-page button guard additionally prevents the navigation in the first place.
 
 ### Delete aspect level (`/aspects/<name>`)
 
@@ -319,6 +321,31 @@ Follows the same staging-then-confirm pattern used elsewhere (import, relation s
 5. On **Cancel** the staging panel is hidden and no changes are made.
 
 The delete button column is a third `<th>`/`<td>` added to the levels table. Dynamically added rows (via *Add level*) also receive the button. Event delegation on `<tbody>` handles both.
+
+### Delete aspect (`/aspects`)
+
+Follows the same staging-then-confirm pattern as delete aspect level.
+
+1. The user clicks **Delete** next to an aspect in the aspects table.
+2. The browser calls `GET /api/aspects/<name>/delete-preview`, which calls `EudoxaManager.stage_remove_aspect`. Nothing is written; the method returns:
+   - `levels_removed` — level names
+   - `vdiffs_removed` — repr strings of all VDiffs for this aspect (excluding `NATURAL_ZERO`, which is never removed)
+   - `al_relations_unset` — `[{la, relation, lb}]` for all set within-aspect AL relations
+   - `vdcm_entries_removed` — `[{vd1, relation, vd2}]` for non-UNDEFINED cross-aspect VDCM entries involving this aspect's VDiffs
+   - `consequence_count` — total named consequences
+   - `duplicate_groups` — `[{keep, discard}]` groups where removing the aspect collapses consequences to the same tuple; `keep` is the lexicographically first short name
+   - `discarded_if_keep` — count of consequences discarded under the "keep" option
+3. The staging panel (`.delete-staging`, defined in `common.css`) is shown below the aspects table. It lists all impacted data and explains what each option does for duplicate groups.
+4. Three action buttons are offered (simplified to Cancel + Confirm deletion when there are no consequences; "Discard duplicates" is hidden when no duplicate groups arise):
+   - **Cancel** — hide panel, no changes
+   - **Delete — keep consequences** — calls `DELETE /api/aspects/<name>` with `{ "consequences": "keep" }`; strips aspect key from all consequences, discards all but the lexicographically first short name from each duplicate group
+   - **Delete — discard duplicates** — calls with `{ "consequences": "discard_duplicates" }`; strips aspect key, discards every member of any duplicate group, keeps only consequences that remained unique
+   - **Delete — discard all consequences** — calls with `{ "consequences": "discard_all" }`; deletes all named consequences
+5. On confirmation the browser reloads the page.
+
+`EudoxaManager.confirm_remove_aspect` removes the aspect's VDCM rows/columns (excluding `NATURAL_ZERO`), deletes the aspect from `mgr.aspects`, then applies the chosen consequence mode.
+
+The `.delete-staging` CSS block was moved from `aspect_detail.css` to `common.css` so it is available on both `/aspects` and `/aspects/<name>`.
 
 ### Aspect detail view (`/aspects/<name>`)
 
@@ -485,12 +512,6 @@ extra outer iterations are only needed when Phase 1 adds new entries that create
 ## Planned/pending work
 
 - Consider incremental closure algorithm to reduce per-apply cost from O(n⁴) to O(n²) per relation
-
-- Add Delete aspect functionality
-
-- Grey out the 'Show dominance graph' button in the case of incomplete consequences in the named consequences table
-
-- Handle incomplete consequences on `/dominance-graph` (direct navigation with incomplete consequences currently shows a broken page; the button guard in `/consequences` is the primary protection)
 
 - Transform the "/" view into a 'Project overview' view with no editing, to avoid different views with (partially) overlapping functionality
 
