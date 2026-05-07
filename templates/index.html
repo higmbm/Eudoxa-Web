@@ -103,12 +103,18 @@
       <label for="inputAuthor">Author:</label>
       <input id="inputAuthor" type="text" placeholder="Optional">
       <button id="btnCreate" class="primary">Create empty project</button>
+      <button id="btnCreateFromCons">Create project from consequences</button>
+      <input id="fileConsImport" type="file" accept=".xlsx" hidden>
     </div>
     <div class="action-panel" style="margin-top:0.8rem;">
       <button id="btnImportProject">Import project from Excel</button>
       <input id="fileImportProject" type="file" accept=".xlsx" hidden>
     </div>
     <div id="importProgressBar" class="progress-bar" hidden><div class="progress-bar-fill"></div></div>
+    <div id="consProgressBar" class="progress-bar" hidden><div class="progress-bar-fill"></div></div>
+
+    <!-- Staged CONS import review panel -->
+    <div id="consStagingPanel" class="import-result" hidden></div>
 
     <!-- Import result panel (shown here on import failure) -->
     <div id="importResult" class="import-result" hidden></div>
@@ -394,6 +400,142 @@
           alert(msg);
         }
       });
+    }
+
+    // ── Create project from consequences ──────────────────────────
+    const btnCreateFromCons = document.getElementById("btnCreateFromCons");
+    const fileConsImport    = document.getElementById("fileConsImport");
+    const consStagingPanel  = document.getElementById("consStagingPanel");
+    const consProgressBar   = document.getElementById("consProgressBar");
+
+    let stagedConsData = null;
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    if (btnCreateFromCons) {
+      btnCreateFromCons.addEventListener("click", () => {
+        const name = document.getElementById("inputProjectName").value.trim();
+        if (!name) { alert("Please enter a project name first."); return; }
+        fileConsImport.click();
+      });
+    }
+
+    if (fileConsImport) {
+      fileConsImport.addEventListener("change", async () => {
+        const file = fileConsImport.files[0];
+        if (!file) return;
+        fileConsImport.value = "";
+
+        consStagingPanel.hidden = true;
+        stagedConsData = null;
+        if (consProgressBar) consProgressBar.hidden = false;
+
+        try {
+          const formData = new FormData();
+          formData.append("file", file);
+          const res = await fetch("/api/project/scan-cons-file", {
+            method: "POST",
+            body: formData
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            showConsStagingError(json.error || "Failed to scan file.");
+            return;
+          }
+          stagedConsData = json.staged;
+          showConsStagingPreview(stagedConsData);
+        } finally {
+          if (consProgressBar) consProgressBar.hidden = true;
+        }
+      });
+    }
+
+    function showConsStagingError(msg) {
+      consStagingPanel.className = "import-result import-result-error";
+      consStagingPanel.innerHTML = `<strong>Error:</strong> ${escapeHtml(msg)}`;
+      consStagingPanel.hidden = false;
+    }
+
+    function showConsStagingPreview(staged) {
+      let html = `<h3 style="margin-top:0;margin-bottom:0.6rem">Review import</h3>`;
+
+      html += `<p><strong>Aspects (${staged.aspects.length})</strong></p><ul>`;
+      for (const asp of staged.aspects) {
+        const levels = asp.levels.map(escapeHtml).join(", ");
+        html += `<li><strong>${escapeHtml(asp.name)}</strong>`
+             +  ` [${escapeHtml(asp.data_type)}]: ${levels}</li>`;
+      }
+      html += `</ul>`;
+
+      const nCons = staged.consequences.length;
+      html += `<details class="import-detail">`
+           +  `<summary><strong>Consequences (${nCons})</strong></summary><ul>`;
+      for (const cons of staged.consequences) {
+        const vals = Object.values(cons.aspect_levels).map(escapeHtml).join(", ");
+        html += `<li><strong>${escapeHtml(cons.short_name)}</strong>: ⟨${vals}⟩</li>`;
+      }
+      html += `</ul></details>`;
+
+      html += `<div style="margin-top:1rem">`
+           +  `<button id="btnConfirmConsImport" class="primary">Confirm import</button>`
+           +  ` <button id="btnCancelConsImport" class="secondary">Cancel</button>`
+           +  `</div>`;
+
+      consStagingPanel.className = "import-result";
+      consStagingPanel.innerHTML = html;
+      consStagingPanel.hidden = false;
+
+      document.getElementById("btnConfirmConsImport")
+              .addEventListener("click", commitConsImport);
+      document.getElementById("btnCancelConsImport")
+              .addEventListener("click", () => {
+                consStagingPanel.hidden = true;
+                stagedConsData = null;
+              });
+    }
+
+    async function commitConsImport() {
+      if (!stagedConsData) return;
+      const name   = document.getElementById("inputProjectName").value.trim();
+      const author = (document.getElementById("inputAuthor")?.value || "").trim();
+      if (!name) { alert("Project name must be non-empty."); return; }
+
+      consStagingPanel.hidden = true;
+      if (consProgressBar) consProgressBar.hidden = false;
+
+      try {
+        const createRes = await fetch("/api/project", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project_name: name, author })
+        });
+        if (!createRes.ok) {
+          let msg = `${createRes.status} ${createRes.statusText}`;
+          try { const j = await createRes.json(); msg = j.error || msg; } catch {}
+          showConsStagingError(msg);
+          return;
+        }
+
+        const commitRes = await fetch("/api/project/commit-cons-import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ staged: stagedConsData })
+        });
+        if (commitRes.ok) {
+          location.reload();
+        } else {
+          await fetch("/api/project", { method: "DELETE" });
+          let msg = "Import commit failed.";
+          try { const j = await commitRes.json(); msg = j.error || msg; } catch {}
+          showConsStagingError(msg);
+        }
+      } finally {
+        if (consProgressBar) consProgressBar.hidden = true;
+      }
     }
 
     // ── Load and render aspects table ──────────────────────────

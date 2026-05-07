@@ -245,6 +245,57 @@ def import_project():
     return {"import_result": result}, 200
 
 
+@app.post("/api/project/scan-cons-file")
+def scan_cons_file():
+    """Scan an Excel file's |CONS| tab and return a staged import preview.
+    No project needs to exist; this is a read-only scan.
+    """
+    f = request.files.get("file")
+    if not f:
+        return {"error": "No file uploaded."}, 400
+
+    try:
+        wb = openpyxl.load_workbook(f.stream, data_only=True)
+    except Exception:
+        logger.exception("Failed to open uploaded workbook for CONS scan")
+        return {"error": "Could not read the uploaded file. Is it a valid Excel file?"}, 400
+
+    result = EudoxaManager().scan_cons_tab_for_import(wb)
+
+    if not result["success"]:
+        return {
+            "error":              result["error"],
+            "consequence_errors": result.get("consequence_errors", []),
+        }, 422
+
+    return {"staged": result}, 200
+
+
+@app.post("/api/project/commit-cons-import")
+def commit_cons_import():
+    """Apply a staged CONS import (from scan-cons-file) to the current project."""
+    mgr = load_manager_or_400()
+
+    if mgr.aspects:
+        return {"error": "Import is only allowed when no aspects are defined."}, 409
+
+    data = request.get_json(silent=True) or {}
+    staged = data.get("staged")
+    if not staged:
+        return {"error": "No staged import data provided."}, 400
+
+    try:
+        mgr.commit_cons_import(staged)
+    except ValueError as e:
+        return {"error": str(e)}, 422
+    except Exception:
+        logger.exception("Unexpected error during CONS import commit")
+        return {"error": "An unexpected error occurred during import."}, 500
+
+    save_manager(mgr)
+    return {"message": "Import committed successfully."}, 200
+
+
 @app.get("/aspects")
 def aspects_html():
     """Render an HTML table of all aspects."""
