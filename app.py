@@ -829,6 +829,34 @@ def vdiff_matrix_html():
     return render_template("vdiff_matrix.html", aspect_names=aspect_names)
 
 
+@app.get("/api/export-consequences")
+def export_consequences():
+    """Export named consequences as a single-tab |CONS| Excel workbook."""
+    import io
+    from flask import send_file
+    mgr = load_manager_or_400()
+    try:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = eudoxa.CONS
+        mgr.export_consequences_to_worksheet(ws)
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        project_name = session.get("project_name", "project")
+        filename = f"{project_name}_consequences.xlsx"
+        return send_file(
+            buf,
+            mimetype="application/vnd.openxmlformats-officedocument"
+                     ".spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        logger.exception("Failed to export consequences")
+        return {"error": f"Export failed: {e}"}, 500
+
+
 @app.get("/api/export-project")
 def export_project():
     """Export the full project as a downloadable Excel workbook."""
