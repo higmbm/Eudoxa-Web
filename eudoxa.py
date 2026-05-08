@@ -1867,6 +1867,117 @@ class EudoxaManager:
         ws = wb[ASP + aspect_name]
         return self.import_aspect_level_relations_from_worksheet(ws)
 
+    def scan_cons_tab_for_import(self, wb) -> dict:
+        """Parse a |CONS| tab and return a staged import preview.
+
+        Aspects and levels are inferred from the data; no |ASP| tabs are needed.
+        No changes are made to self.
+
+        Returns a dict:
+          success              — bool
+          error                — str (if success=False, first/summary error)
+          consequence_errors   — [str] (all row-level errors)
+          aspects              — [{name, data_type, levels: [str, ...]}]
+          consequences         — [{short_name, aspect_levels: {asp: level}}]
+        """
+        result = {
+            "success":            False,
+            "error":              "",
+            "consequence_errors": [],
+            "aspects":            [],
+            "consequences":       [],
+        }
+
+        cons_sheet_name = next((n for n in wb.sheetnames if n == CONS), None)
+        if cons_sheet_name is None:
+            result["error"] = "No |CONS| tab found in the file."
+            return result
+
+        ws = wb[cons_sheet_name]
+
+        # Row 1: cols 2+ = aspect names
+        aspect_names = []
+        for col_index in range(2, ws.max_column + 1):
+            val = ws.cell(row=1, column=col_index).value
+            if val is None:
+                break
+            aspect_names.append(str(val).strip())
+
+        if not aspect_names:
+            result["error"] = "No aspect names found in the |CONS| tab header row."
+            return result
+
+        # Row 2: cols 2+ = optional data-type hints ("str", "int", "float")
+        valid_types = {"str", "int", "float"}
+        data_types = {}
+        for i, a_name in enumerate(aspect_names):
+            hint = ws.cell(row=2, column=i + 2).value
+            hint_str = str(hint).strip() if hint is not None else ""
+            data_types[a_name] = hint_str if hint_str in valid_types else "str"
+
+        # Rows 3+: short_name (col 1) + level values (cols 2+)
+        levels_seen = {a: {} for a in aspect_names}   # ordered set per aspect
+        consequences = []
+        consequence_errors = []
+
+        for row_idx, row in enumerate(ws.iter_rows(min_row=3, values_only=True), start=3):
+            short_name = row[0]
+            if short_name is None:
+                break
+            short_name = str(short_name).strip()
+            if not short_name:
+                break
+
+            al = {}
+            error_in_row = False
+            for i, a_name in enumerate(aspect_names):
+                val = row[i + 1] if (i + 1) < len(row) else None
+                if val is None:
+                    consequence_errors.append(
+                        f"Row {row_idx} '{short_name}': missing value for aspect '{a_name}'"
+                    )
+                    error_in_row = True
+                    break
+                level_str = str(val).strip()
+                al[a_name] = level_str
+                if level_str not in levels_seen[a_name]:
+                    levels_seen[a_name][level_str] = None   # preserve insertion order
+
+            if not error_in_row:
+                consequences.append({"short_name": short_name, "aspect_levels": al})
+
+        if consequence_errors:
+            summary = "; ".join(consequence_errors[:3])
+            if len(consequence_errors) > 3:
+                summary += f" (and {len(consequence_errors) - 3} more)"
+            result["error"] = summary
+            result["consequence_errors"] = consequence_errors
+            return result
+
+        if not consequences:
+            result["error"] = "No consequences found in the |CONS| tab (data starts at row 3)."
+            return result
+
+        result["success"] = True
+        result["aspects"] = [
+            {"name": a, "data_type": data_types[a], "levels": list(levels_seen[a].keys())}
+            for a in aspect_names
+        ]
+        result["consequences"] = consequences
+        return result
+
+    def commit_cons_import(self, staged: dict) -> None:
+        """Apply a staged cons import (from scan_cons_tab_for_import) to self.
+
+        Creates one aspect per entry in staged["aspects"] (with no levels), then
+        adds each consequence — add_consequence auto-creates levels on the fly in
+        first-appearance order, matching the order captured during the scan.
+        """
+        for asp in staged["aspects"]:
+            self.add_aspect(asp["name"], asp["data_type"])
+        for cons in staged["consequences"]:
+            self.add_consequence(cons["short_name"], cons["aspect_levels"])
+
     def import_consequences_from_excel(self, filename: str):
         import openpyxl
         wb = openpyxl.load_workbook(filename, data_only=True)
