@@ -45,6 +45,7 @@
       <div class="section-header">
         <h2>Aspects</h2>
         <a id="btnManageAspects" href="/aspects" class="header-link-button">Manage aspects</a>
+        <button id="btnExportAspects">Export aspects</button>
       </div>
       <table class="data-table" id="aspectsTable">
         <thead>
@@ -194,6 +195,31 @@
           const disposition = res.headers.get("Content-Disposition") || "";
           const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
           a.download = match ? match[1].replace(/['"]/g, "") : "export.xlsx";
+          a.href = url;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        } finally {
+          exportProgressBar.hidden = true;
+        }
+      });
+    }
+
+    // ── Export aspects ─────────────────────────────────────────
+    const btnExportAspects = document.getElementById("btnExportAspects");
+    if (btnExportAspects) {
+      btnExportAspects.addEventListener("click", async () => {
+        exportProgressBar.hidden = false;
+        try {
+          const res = await fetch("/api/export-aspects");
+          if (!res.ok) { alert("Export failed."); return; }
+          const blob = await res.blob();
+          const url  = URL.createObjectURL(blob);
+          const a    = document.createElement("a");
+          const disposition = res.headers.get("Content-Disposition") || "";
+          const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+          a.download = match ? match[1].replace(/['"]/g, "") : "aspects.xlsx";
           a.href = url;
           document.body.appendChild(a);
           a.click();

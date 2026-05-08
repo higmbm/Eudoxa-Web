@@ -192,6 +192,7 @@ The vdcm is stored as a two-level JSON object mirroring the adjacency dict:
 | `POST` | `/api/project/import` | Import from Excel |
 | `POST` | `/api/project/scan-cons-file` | Scan an Excel file's `\|CONS\|` tab and return a staged preview (aspects inferred from header row, levels from data); no project required |
 | `POST` | `/api/project/commit-cons-import` | Apply a staged CONS import (`{staged: {...}}` JSON) to the current empty project; creates aspects and levels, then adds consequences |
+| `GET` | `/api/export-aspects` | Download a multi-tab workbook with one `\|ASP\ <name>\|` tab per aspect (levels + relations matrix); filename `{project_name}_aspects.xlsx` |
 | `GET` | `/api/export-consequences` | Download a single-tab `\|CONS\|` workbook for the current project; filename `{project_name}_consequences.xlsx` |
 | `GET` | `/api/export-project` | Download Excel workbook |
 
@@ -410,7 +411,7 @@ finally { progressBar.hidden = true; }
 Used on:
 - `/aspects/<name>` — shown during *Apply changes* (`POST /api/aspects/<name>/relations/batch`)
 - `/vdiff-matrix` — shown during *Apply changes* (`POST /api/vdiff-matrix/batch`)
-- `/` — shown during export (`GET /api/export-project` and `GET /api/export-consequences`), during full Excel import (`POST /api/project` + `POST /api/project/import`), and during the CONS-only import scan and commit steps (`POST /api/project/scan-cons-file` / `POST /api/project/commit-cons-import`)
+- `/` — shown during export (`GET /api/export-project`, `GET /api/export-aspects`, and `GET /api/export-consequences`), during full Excel import (`POST /api/project` + `POST /api/project/import`), and during the CONS-only import scan and commit steps (`POST /api/project/scan-cons-file` / `POST /api/project/commit-cons-import`)
 
 ### Button styles
 
@@ -548,7 +549,7 @@ extra outer iterations are only needed when Phase 1 adds new entries that create
 
 - ~~Import/export consequences only~~ Resolved: "Create project from consequences" on `/` bootstraps a new project from a `\|CONS\|`-only file (aspects and levels inferred, staged preview before commit). "Export consequences" in the consequences section header on `/` downloads a single-tab `\|CONS\|` workbook.
 
-- Import/export single aspect
+- ~~Import/export single aspect~~ Resolved (export side): "Export aspects" in the Aspects section header on `/` downloads a multi-tab workbook with one `\|ASP\|` tab per aspect including the relations matrix, importable via the existing pipeline. Per-aspect import is still pending.
 
 - More feedback (and more human-readable) to user on import and export
 

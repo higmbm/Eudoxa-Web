@@ -829,6 +829,36 @@ def vdiff_matrix_html():
     return render_template("vdiff_matrix.html", aspect_names=aspect_names)
 
 
+@app.get("/api/export-aspects")
+def export_aspects():
+    """Export all aspects as a multi-tab Excel workbook (one |ASP| tab per aspect)."""
+    import io
+    from flask import send_file
+    mgr = load_manager_or_400()
+    try:
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)   # remove the default blank sheet
+        for aspect in mgr.aspects.values():
+            ws = wb.create_sheet(title=eudoxa.ASP + aspect.name)
+            mgr.export_aspect_to_worksheet(aspect, ws)
+            mgr.export_aspect_level_relations_to_worksheet(aspect, ws)
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        project_name = session.get("project_name", "project")
+        filename = f"{project_name}_aspects.xlsx"
+        return send_file(
+            buf,
+            mimetype="application/vnd.openxmlformats-officedocument"
+                     ".spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        logger.exception("Failed to export aspects")
+        return {"error": f"Export failed: {e}"}, 500
+
+
 @app.get("/api/export-consequences")
 def export_consequences():
     """Export named consequences as a single-tab |CONS| Excel workbook."""
