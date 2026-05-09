@@ -775,6 +775,17 @@ def delete_aspect(aspect_name):
 # -----------------------------------------------------------
 #  REST: VDIFF COMPARISON MATRIX
 # -----------------------------------------------------------
+def _derive_vdiff_order(raw_fwd, raw_bwd):
+    T, F = eudoxa.TRUE, eudoxa.FALSE
+    if raw_fwd == T and raw_bwd == F:  return eudoxa.GT
+    if raw_fwd == T and raw_bwd == T:  return eudoxa.DEQ
+    if raw_fwd == T:                   return eudoxa.GTE
+    if raw_fwd == F and raw_bwd == T:  return eudoxa.LT
+    if raw_bwd == T:                   return eudoxa.LTE
+    if raw_fwd == F:                   return eudoxa.FALSE
+    return eudoxa.UNDEFINED
+
+
 @app.get("/api/vdiff-matrix/<an1>/<an2>")
 def get_vdiff_matrix(an1, an2):
     """Return the value-difference comparison sub-matrix for aspect pair (an1, an2).
@@ -789,16 +800,6 @@ def get_vdiff_matrix(an1, an2):
 
     vdcm = mgr.vdiff_comparison_matrix
 
-    def derive_order(raw_fwd, raw_bwd):
-        T, F = eudoxa.TRUE, eudoxa.FALSE
-        if raw_fwd == T and raw_bwd == F:  return eudoxa.GT
-        if raw_fwd == T and raw_bwd == T:  return eudoxa.DEQ
-        if raw_fwd == T:                   return eudoxa.GTE
-        if raw_fwd == F and raw_bwd == T:  return eudoxa.LT
-        if raw_bwd == T:                   return eudoxa.LTE
-        if raw_fwd == F:                   return eudoxa.FALSE
-        return eudoxa.UNDEFINED
-
     row_vdiffs = mgr._sorted_vdiffs(mgr.aspects[an1])
     col_vdiffs = mgr._sorted_vdiffs(mgr.aspects[an2])
     row_labels = [repr(v) for v in row_vdiffs]
@@ -812,13 +813,60 @@ def get_vdiff_matrix(an1, an2):
             raw_bwd = eudoxa.get_vdiff_relation(vdcm, cv, rv)
             diag    = (an1 == an2 and rv == cv)
             row.append({
-                "order_rel": derive_order(raw_fwd, raw_bwd),
+                "order_rel": _derive_vdiff_order(raw_fwd, raw_bwd),
                 "raw_rel":   raw_fwd,
                 "diagonal":  diag,
             })
         cells.append(row)
 
     return {"row_labels": row_labels, "col_labels": col_labels, "cells": cells}, 200
+
+
+@app.get("/api/vdiff-matrix/<an1>/<an2>/closure")
+def get_vdiff_matrix_closure(an1, an2):
+    """Return cells where the closure infers a relation not present in the committed matrix.
+    Response: { cells: [{row_label, col_label, order_rel}, ...] }
+    Response on collision: { colls: [...] }, 409
+    """
+    mgr = load_manager_or_400()
+    if an1 not in mgr.aspects:
+        return {"error": f"Aspect '{an1}' not found"}, 404
+    if an2 not in mgr.aspects:
+        return {"error": f"Aspect '{an2}' not found"}, 404
+
+    closure_matrix, _, colls = mgr.closure()
+    if colls:
+        return {"colls": [_fmt_coll(c) for c in colls]}, 409
+
+    committed    = mgr.vdiff_comparison_matrix
+    row_vdiffs   = mgr._sorted_vdiffs(mgr.aspects[an1])
+    col_vdiffs   = mgr._sorted_vdiffs(mgr.aspects[an2])
+    row_labels   = [repr(v) for v in row_vdiffs]
+    col_labels   = [repr(v) for v in col_vdiffs]
+
+    cells = []
+    for rv, row_lbl in zip(row_vdiffs, row_labels):
+        for cv, col_lbl in zip(col_vdiffs, col_labels):
+            if an1 == an2 and rv == cv:
+                continue  # skip diagonal
+            comm_order = _derive_vdiff_order(
+                eudoxa.get_vdiff_relation(committed, rv, cv),
+                eudoxa.get_vdiff_relation(committed, cv, rv),
+            )
+            if comm_order != eudoxa.UNDEFINED:
+                continue  # already committed — not a ghost candidate
+            clos_order = _derive_vdiff_order(
+                eudoxa.get_vdiff_relation(closure_matrix, rv, cv),
+                eudoxa.get_vdiff_relation(closure_matrix, cv, rv),
+            )
+            if clos_order != eudoxa.UNDEFINED:
+                cells.append({
+                    "row_label": row_lbl,
+                    "col_label": col_lbl,
+                    "order_rel": clos_order,
+                })
+
+    return {"cells": cells}, 200
 
 
 @app.get("/vdiff-matrix")
