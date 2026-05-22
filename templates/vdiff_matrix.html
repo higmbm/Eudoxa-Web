@@ -434,6 +434,19 @@
               updateClosureButton();
             });
 
+            // Promote a closure-staged cell to user-confirmed as soon as the
+            // user clicks its dropdown. 'change' is suppressed by the browser
+            // when the same option is re-selected, so pointerdown is the
+            // earliest reliable signal of deliberate user interaction.
+            sel.addEventListener("pointerdown", () => {
+              const entry = pendingChanges.get(cellKey);
+              if (!entry?.fromClosure) return;
+              entry.fromClosure = false;
+              td.classList.replace("vdiff-closure-pending", "vdiff-pending");
+              td.title = cellTooltip(an1, l1a, l1b, an2, l2a, l2b, entry.newOrder, false);
+              updateClosureButton();
+            });
+
             td.appendChild(sel);
           }
           tr.appendChild(td);
