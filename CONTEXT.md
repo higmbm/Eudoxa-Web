@@ -215,6 +215,7 @@ The vdcm is stored as a two-level JSON object mirroring the adjacency dict:
 | `GET` | `/api/aspects/<name>/relations` | Get relations matrix |
 | `PATCH` | `/api/aspects/<name>/relations/<la>/<lb>` | Set relation |
 | `POST` | `/api/aspects/<name>/relations/batch` | Apply a batch of relation changes atomically; aborts all on collision |
+| `GET` | `/api/aspects/<name>/relations/closure` | Get closure additions: cells where the committed AL relation is UNDEFINED but the closure infers one. Returns `{ cells: [{la, lb, relation}] }`. Returns 409 with `{ colls }` if the closure has collisions. |
 | `GET` | `/api/aspects/<name>/level-graph` | Level graph for Vis.js |
 | `GET` | `/api/level-descriptions` | All level descriptions |
 | `GET` | `/api/aspects/<name>/vdiff-classification` | Classify VDiffs as non_negative / negative / undecided; `?closure=1` for closure-based classification |
@@ -367,12 +368,15 @@ The `.delete-staging` CSS block was moved from `aspect_detail.css` to `common.cs
 ### Aspect detail view (`/aspects/<name>`)
 
 - **Batch apply workflow:** the level relations matrix uses the same pending-changes pattern as the VDiff matrix (see below).
-  Changes are accumulated in a `pendingChanges` Map (keyed by `"la|||lb"`).
-  Pending cells show the colour of the newly selected relation plus a dashed amber outline (`#e6c200`, class `.rel-pending` on the `<td>`).
+  Changes are accumulated in a `pendingChanges` Map (keyed by `"la|||lb"`). Each entry carries a `fromClosure` flag.
+  Pending cells show the colour of the newly selected relation plus a dashed outline: amber (`#e6c200`, class `.rel-pending`) for user-initiated changes, blue (`#5c6bc0`, class `.rel-closure-pending`) for closure-staged changes.
   *Apply changes* and *Discard changes* buttons in the section header are disabled until at least one change is pending.
 - Clicking *Apply changes* POSTs all pending changes to `/api/aspects/<name>/relations/batch`.
   On success the matrix reloads and highlights clear. On collision **pending changes remain highlighted** so the user can deselect the offending relation(s) and retry.
-- `loadRelations()` always clears pending state (matrix is fully replaced on every call).
+- **View closure button:** fetches `GET /api/aspects/<name>/relations/closure` and stages every closure addition directly into `pendingChanges` with `fromClosure: true` and the blue dashed border. Cells already in `pendingChanges` (user-modified) are skipped. If no new relations can be inferred the inference panel shows a "no new relations" message; collisions show a red panel. The button label toggles to "Hide closure" while closure-staged entries exist; clicking it again unstages them (reverts select value, class, and tooltip). A closure-staged cell is promoted to `fromClosure: false` (amber border) as soon as the user clicks its dropdown (`pointerdown`), before a value is even selected.
+- `cellElems` Map (keyed by `"la|||lb"`) stores `{ td, sel, originalRel }` for every non-diagonal cell; populated by `makeCellDropdown`, cleared by `loadRelations`. Used by `viewClosure` to look up elements.
+- **Cell tooltips:** non-diagonal cells show a `title` attribute of the form `la rel lb | Click to edit. Apply changes to save.`. Closure-staged cells show `Inferred: la rel lb`.
+- `loadRelations()` always clears pending state and `cellElems` (matrix is fully replaced on every call).
 - Navigating away with pending changes triggers a `beforeunload` guard.
 
 ### VDiff matrix view (`/vdiff-matrix`)
@@ -540,11 +544,11 @@ extra outer iterations are only needed when Phase 1 adds new entries that create
 
 - ~~Design choice: Special treatment of natural zero diff, to avoid redundancy?~~ Resolved: vdcm refactored to adjacency dict with single `NATURAL_ZERO` key (branch `refactor/vdcm`).
 
-- Vdiff relation matrix closure
+- ~~Vdiff relation matrix closure~~ Resolved: "View closure" button in both `/vdiff-matrix` and `/aspects/<name>` stages all closure-inferred relations as pending changes with a blue dashed border; toggleable and fully integrated with the existing Apply/Discard workflow in each view.
 
 - Show vdiffs for a given aspect (organized by level)
 
-- ~~Show vdiff matrix closure~~ Resolved: "View closure" button in `/vdiff-matrix` stages all closure-inferred relations for the current aspect pair as pending changes with a blue dashed border; toggleable and fully integrated with the existing Apply/Discard workflow.
+- ~~Show vdiff matrix closure~~ Resolved: see "Vdiff relation matrix closure" above.
 
 - Change (re-sort) aspect order 
 

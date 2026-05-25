@@ -646,6 +646,49 @@ def patch_relation(aspect_name, la, lb):
     }, 200
 
 
+@app.get("/api/aspects/<aspect_name>/relations/closure")
+def get_relations_closure(aspect_name):
+    """Return cells where the closure infers a relation not present in the committed matrix.
+    Response: { cells: [{la, lb, relation}, ...] }
+    Response on collision: { colls: [...] }, 409
+    """
+    mgr = load_manager_or_400()
+    if aspect_name not in mgr.aspects:
+        return {"error": f"Aspect '{aspect_name}' not found"}, 404
+
+    closure_matrix, _, colls = mgr.closure()
+    if colls:
+        return {"colls": [_fmt_coll(c) for c in colls]}, 409
+
+    aspect = mgr.aspects[aspect_name]
+    levels = list(aspect.levels.keys())
+    zero   = eudoxa.NATURAL_ZERO
+    T, F, U = eudoxa.TRUE, eudoxa.FALSE, eudoxa.UNDEFINED
+
+    cells = []
+    for la in levels:
+        for lb in levels:
+            if la == lb:
+                continue
+            # Skip if the committed relation is already set
+            committed = mgr.get_aspect_level_relation(aspect_name, la, lb)
+            if committed != eudoxa.UNDEFINED:
+                continue
+            # Derive the AL relation from the closure matrix
+            vd_ab    = eudoxa.VDiff(aspect_name, la, lb)
+            ab_z     = eudoxa.get_vdiff_relation(closure_matrix, vd_ab,  zero)
+            z_ab     = eudoxa.get_vdiff_relation(closure_matrix, zero,   vd_ab)
+            if   ab_z == T and z_ab == F: clos_rel = eudoxa.BT
+            elif ab_z == T and z_ab == U: clos_rel = eudoxa.BTE
+            elif ab_z == T and z_ab == T: clos_rel = eudoxa.EQ
+            elif ab_z == U and z_ab == T: clos_rel = eudoxa.WTE
+            elif ab_z == F and z_ab == T: clos_rel = eudoxa.WT
+            else: continue  # no inference for this pair
+            cells.append({"la": la, "lb": lb, "relation": clos_rel})
+
+    return {"cells": cells}, 200
+
+
 @app.post("/api/aspects/<aspect_name>/relations/batch")
 def batch_patch_relations(aspect_name):
     """Apply a batch of aspect level relation changes atomically.
