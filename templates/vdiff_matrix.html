@@ -28,9 +28,10 @@
   <section class="section" id="matrixSection" hidden>
     <div class="section-header">
       <h2 id="matrixTitle"></h2>
-      <button id="btnToggleNeg" class="btn-toggle-neg">Hide negative</button>
-      <button id="btnApply"   class="primary" disabled>Apply changes</button>
-      <button id="btnDiscard"               disabled>Discard changes</button>
+      <button id="btnToggleNeg"  class="btn-toggle-neg">Hide negative</button>
+      <button id="btnViewClosure">View closure</button>
+      <button id="btnApply"      class="primary" disabled>Apply changes</button>
+      <button id="btnDiscard"                    disabled>Discard changes</button>
     </div>
     <div id="progressBar" class="progress-bar" hidden><div class="progress-bar-fill"></div></div>
     <div id="inferencePanel" class="inference-panel" hidden></div>
@@ -40,19 +41,87 @@
   <script>
     const ASPECT_NAMES = {{ aspect_names | tojson }};
 
-    const selPair    = document.getElementById("selPair");
-    const btnApply   = document.getElementById("btnApply");
-    const btnDiscard = document.getElementById("btnDiscard");
+    const selPair        = document.getElementById("selPair");
+    const btnApply       = document.getElementById("btnApply");
+    const btnDiscard     = document.getElementById("btnDiscard");
+    const btnViewClosure = document.getElementById("btnViewClosure");
 
     // ── Pending changes ────────────────────────────────────────────────────
-    // Maps cellKey → { an1, l1a, l1b, an2, l2a, l2b, newOrder, originalOrder, sel }
+    // Maps cellKey → { an1, l1a, l1b, an2, l2a, l2b, newOrder, originalOrder, sel, td, fromClosure }
     // cellKey: "${an1}|${l1a}|${l1b}|${an2}|${l2a}|${l2b}"
     const pendingChanges = new Map();
+
+    // Maps cellKey → { td, sel, originalOrder } — populated by renderMatrix
+    const cellElems = new Map();
 
     function updateBatchButtons() {
       const hasPending = pendingChanges.size > 0;
       btnApply.disabled   = !hasPending;
       btnDiscard.disabled = !hasPending;
+    }
+
+    function updateClosureButton() {
+      const hasClosurePending = [...pendingChanges.values()].some(p => p.fromClosure);
+      btnViewClosure.textContent = hasClosurePending ? "Hide closure" : "View closure";
+    }
+
+    async function viewClosure() {
+      // Toggle: if closure-staged cells exist, unstage them and return.
+      const closureEntries = [...pendingChanges.entries()].filter(([, p]) => p.fromClosure);
+      if (closureEntries.length > 0) {
+        closureEntries.forEach(([key, p]) => {
+          p.sel.value = p.originalOrder;
+          p.td.className = "vdiff-cell " + orderClass(p.originalOrder);
+          p.td.title = cellTooltip(p.an1, p.l1a, p.l1b, p.an2, p.l2a, p.l2b, p.originalOrder, false);
+          pendingChanges.delete(key);
+        });
+        updateBatchButtons();
+        updateClosureButton();
+        return;
+      }
+      const [an1, an2] = selPair.value.split("|");
+      const res  = await fetch(
+        `/api/vdiff-matrix/${encodeURIComponent(an1)}/${encodeURIComponent(an2)}/closure`
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showClosurePanel(json.colls || [json.error || "Unknown error"], true);
+        return;
+      }
+      let added = 0;
+      for (const c of json.cells) {
+        const [l1a, l1b] = parseLbl(c.row_label);
+        const [l2a, l2b] = parseLbl(c.col_label);
+        const cellKey = `${an1}|${l1a}|${l1b}|${an2}|${l2a}|${l2b}`;
+        const elem = cellElems.get(cellKey);
+        if (!elem || pendingChanges.has(cellKey)) continue;
+        elem.sel.value = c.order_rel;
+        elem.td.className = "vdiff-cell " + orderClass(c.order_rel) + " vdiff-closure-pending";
+        elem.td.title = cellTooltip(an1, l1a, l1b, an2, l2a, l2b, c.order_rel, true);
+        pendingChanges.set(cellKey, {
+          an1, l1a, l1b, an2, l2a, l2b,
+          newOrder: c.order_rel, originalOrder: elem.originalOrder,
+          sel: elem.sel, td: elem.td,
+          fromClosure: true,
+        });
+        added++;
+      }
+      updateBatchButtons();
+      updateClosureButton();
+      if (added === 0) showClosurePanel([], false);
+    }
+
+    function showClosurePanel(colls, isCollision) {
+      const panel = document.getElementById("inferencePanel");
+      if (isCollision) {
+        panel.className = "inference-panel vdiff-infer-coll";
+        panel.innerHTML = `<p class="vdiff-infer-heading"><strong>Closure has collisions — cannot compute.</strong></p>`
+          + collapsible("Collisions", colls);
+      } else {
+        panel.className = "inference-panel vdiff-infer-ok";
+        panel.innerHTML = `<p class="vdiff-infer-heading">Closure adds no new relations to this aspect pair.</p>`;
+      }
+      panel.hidden = false;
     }
 
     function discardPendingChanges() {
@@ -62,6 +131,7 @@
       });
       pendingChanges.clear();
       updateBatchButtons();
+      updateClosureButton();
       document.getElementById("inferencePanel").hidden = true;
     }
 
@@ -100,6 +170,7 @@
 
     btnApply.addEventListener("click", applyPendingChanges);
     btnDiscard.addEventListener("click", discardPendingChanges);
+    btnViewClosure.addEventListener("click", viewClosure);
 
     // Warn before navigating away with unapplied changes
     window.addEventListener("beforeunload", e => {
@@ -143,7 +214,9 @@
     async function loadMatrix() {
       // Clear any pending state — the matrix is being fully reloaded
       pendingChanges.clear();
+      cellElems.clear();
       updateBatchButtons();
+      updateClosureButton();
 
       const [an1, an2] = selPair.value.split("|");
 
@@ -256,6 +329,19 @@
       panel.hidden = false;
     }
 
+    function formatVdiffLabel(an, la, lb) {
+      if (la === "*" && lb === "*") return ZDIFF_DISPLAY;
+      return `${DELTA}[${an}](${la},${lb})`;
+    }
+
+    function cellTooltip(an1, l1a, l1b, an2, l2a, l2b, orderRel, fromClosure) {
+      if (!orderRel) return "";
+      const lhs  = formatVdiffLabel(an1, l1a, l1b);
+      const rhs  = formatVdiffLabel(an2, l2a, l2b);
+      const base = `${lhs} ${orderRel} ${rhs}`;
+      return fromClosure ? `Inferred: ${base}` : base;
+    }
+
     function orderClass(ord) {
       if (ord === DEQ)                              return "vdiff-deq";
       if (ord === GT  || ord === GTE)               return "vdiff-true";
@@ -325,6 +411,8 @@
             });
 
             const originalOrder = cell.order_rel;
+            cellElems.set(cellKey, { td, sel, originalOrder });
+            td.title = cellTooltip(an1, l1a, l1b, an2, l2a, l2b, originalOrder, false);
 
             sel.addEventListener("change", () => {
               const newOrder = sel.value;
@@ -333,13 +421,30 @@
                 pendingChanges.delete(cellKey);
                 td.className = "vdiff-cell " + orderClass(originalOrder);
               } else {
+                // User-initiated change always overrides closure staging
                 pendingChanges.set(cellKey, {
                   an1, l1a, l1b, an2, l2a, l2b,
-                  newOrder, originalOrder, sel, td
+                  newOrder, originalOrder, sel, td,
+                  fromClosure: false,
                 });
                 td.className = "vdiff-cell " + orderClass(newOrder) + " vdiff-pending";
               }
+              td.title = cellTooltip(an1, l1a, l1b, an2, l2a, l2b, newOrder, false);
               updateBatchButtons();
+              updateClosureButton();
+            });
+
+            // Promote a closure-staged cell to user-confirmed as soon as the
+            // user clicks its dropdown. 'change' is suppressed by the browser
+            // when the same option is re-selected, so pointerdown is the
+            // earliest reliable signal of deliberate user interaction.
+            sel.addEventListener("pointerdown", () => {
+              const entry = pendingChanges.get(cellKey);
+              if (!entry?.fromClosure) return;
+              entry.fromClosure = false;
+              td.classList.replace("vdiff-closure-pending", "vdiff-pending");
+              td.title = cellTooltip(an1, l1a, l1b, an2, l2a, l2b, entry.newOrder, false);
+              updateClosureButton();
             });
 
             td.appendChild(sel);

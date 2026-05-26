@@ -95,8 +95,9 @@
   <div class="section-header">
     <h2>Level relations</h2>
     <button id="btnToggleGraph" class="toggle-graph-btn">Show graph</button>
-    <button id="btnApply"   class="primary" disabled>Apply changes</button>
-    <button id="btnDiscard"               disabled>Discard changes</button>
+    <button id="btnViewClosure">View closure</button>
+    <button id="btnApply"      class="primary" disabled>Apply changes</button>
+    <button id="btnDiscard"                    disabled>Discard changes</button>
   </div>
   <div id="progressBar" class="progress-bar" hidden><div class="progress-bar-fill"></div></div>
 
@@ -436,11 +437,15 @@
     let relCells         = {};
 
     // ── Pending changes ──────────────────────────────────────────
-    // Maps cellKey ("la|||lb") → { la, lb, newRel, originalRel, sel }
+    // Maps cellKey ("la|||lb") → { la, lb, newRel, originalRel, sel, td, fromClosure }
     const pendingChanges = new Map();
 
-    const btnApply   = document.getElementById("btnApply");
-    const btnDiscard = document.getElementById("btnDiscard");
+    // Maps cellKey → { td, sel, originalRel } for closure lookup
+    const cellElems = new Map();
+
+    const btnApply       = document.getElementById("btnApply");
+    const btnDiscard     = document.getElementById("btnDiscard");
+    const btnViewClosure = document.getElementById("btnViewClosure");
 
     function updateBatchButtons() {
       const hasPending = pendingChanges.size > 0;
@@ -448,13 +453,82 @@
       btnDiscard.disabled = !hasPending;
     }
 
+    function updateClosureButton() {
+      const hasClosureEntries = [...pendingChanges.values()].some(p => p.fromClosure);
+      btnViewClosure.textContent = hasClosureEntries ? "Hide closure" : "View closure";
+    }
+
+    async function viewClosure() {
+      // If there are closure-staged entries, hide them (remove only fromClosure entries)
+      const hasClosureEntries = [...pendingChanges.values()].some(p => p.fromClosure);
+      if (hasClosureEntries) {
+        for (const [key, p] of pendingChanges) {
+          if (p.fromClosure) {
+            p.sel.value = p.originalRel;
+            p.td.className = `rel-cell rel-editable ${relCellClass(p.originalRel)}`;
+            p.td.title = cellTooltip(p.la, p.lb, p.originalRel, false);
+            pendingChanges.delete(key);
+          }
+        }
+        updateBatchButtons();
+        updateClosureButton();
+        return;
+      }
+
+      // Fetch closure
+      const res = await fetch(`/api/aspects/${encodeURIComponent(ASPECT_NAME)}/relations/closure`);
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showClosurePanel(json.colls || [], []);
+        return;
+      }
+      const cells = json.cells || [];
+      if (cells.length === 0) {
+        showClosurePanel([], []);
+        return;
+      }
+
+      // Stage closure cells that are not already pending
+      for (const { la, lb, relation } of cells) {
+        const cellKey = `${la}|||${lb}`;
+        if (pendingChanges.has(cellKey)) continue;  // already staged by user
+        const elems = cellElems.get(cellKey);
+        if (!elems) continue;
+        const { td, sel, originalRel } = elems;
+        sel.value = relation;
+        pendingChanges.set(cellKey, { la, lb, newRel: relation, originalRel, sel, td, fromClosure: true });
+        td.className = `rel-cell rel-editable ${relCellClass(relation)} rel-closure-pending`;
+        td.title = cellTooltip(la, lb, relation, true);
+      }
+      updateBatchButtons();
+      updateClosureButton();
+    }
+
+    function showClosurePanel(colls, cells) {
+      const panel = document.getElementById("inferencePanel");
+      let inner = "";
+      if (colls.length > 0) {
+        inner += `<p class="asp-infer-heading"><strong>Closure has collisions — cannot show inferences.</strong></p>`;
+        inner += `<details class="asp-infer-detail"><summary>Collisions (${colls.length})</summary>`
+               + `<ul>${colls.map(s => `<li>${s}</li>`).join("")}</ul></details>`;
+        panel.className = "inference-panel asp-infer-coll";
+      } else {
+        inner += `<p class="asp-infer-heading"><strong>No new relations can be inferred from the closure.</strong></p>`;
+        panel.className = "inference-panel asp-infer-ok";
+      }
+      panel.innerHTML = inner;
+      panel.hidden = false;
+    }
+
     function discardPendingChanges() {
       pendingChanges.forEach(p => {
         p.sel.value = p.originalRel;
         p.td.className = `rel-cell rel-editable ${relCellClass(p.originalRel)}`;
+        p.td.title = cellTooltip(p.la, p.lb, p.originalRel, false);
       });
       pendingChanges.clear();
       updateBatchButtons();
+      updateClosureButton();
       document.getElementById("inferencePanel").hidden = true;
     }
 
@@ -494,6 +568,7 @@
 
     btnApply.addEventListener("click", applyPendingChanges);
     btnDiscard.addEventListener("click", discardPendingChanges);
+    btnViewClosure.addEventListener("click", viewClosure);
 
     window.addEventListener("beforeunload", e => {
       if (pendingChanges.size > 0) {
@@ -505,7 +580,9 @@
     async function loadRelations() {
       // Clear pending state — the matrix is being fully reloaded
       pendingChanges.clear();
+      cellElems.clear();
       updateBatchButtons();
+      updateClosureButton();
 
       const res = await fetch(`/api/aspects/${encodeURIComponent(ASPECT_NAME)}/relations`);
       if (!res.ok) return;
@@ -530,10 +607,11 @@
       return `${label} | ${action}`;
     }
 
-    function cellTooltip(la, lb) {
-      const rel = relCells[`${la}|||${lb}`] || "";
+    function cellTooltip(la, lb, rel, fromClosure) {
+      if (rel === undefined) rel = relCells[`${la}|||${lb}`] || "";
       const relPart = rel === "" ? "?" : rel;
-      return `${la} ${relPart} ${lb} | Click to edit. Apply changes to save.`;
+      const base = `${la} ${relPart} ${lb} | Click to edit. Apply changes to save.`;
+      return fromClosure ? `Inferred: ${la} ${relPart} ${lb}` : base;
     }
 
     function relCellClass(rel) {
@@ -598,7 +676,7 @@
           } else {
             const rel = relCells[`${la}|||${lb}`] || "";
             td.className = `rel-cell rel-editable ${relCellClass(rel)}`;
-            td.title = cellTooltip(la, lb);
+            td.title = cellTooltip(la, lb, rel, false);
             makeCellDropdown(td);
           }
           tr.appendChild(td);
@@ -626,14 +704,27 @@
         sel.appendChild(o);
       });
 
+      cellElems.set(cellKey, { td, sel, originalRel });
+
+      sel.addEventListener("pointerdown", () => {
+        const entry = pendingChanges.get(cellKey);
+        if (!entry?.fromClosure) return;
+        entry.fromClosure = false;
+        td.classList.replace("rel-closure-pending", "rel-pending");
+        td.title = cellTooltip(la, lb, entry.newRel, false);
+        updateClosureButton();
+      });
+
       sel.addEventListener("change", () => {
         const newRel = sel.value;
         if (newRel === originalRel) {
           pendingChanges.delete(cellKey);
           td.className = `rel-cell rel-editable ${relCellClass(originalRel)}`;
+          td.title = cellTooltip(la, lb, originalRel, false);
         } else {
-          pendingChanges.set(cellKey, { la, lb, newRel, originalRel, sel, td });
+          pendingChanges.set(cellKey, { la, lb, newRel, originalRel, sel, td, fromClosure: false });
           td.className = `rel-cell rel-editable ${relCellClass(newRel)} rel-pending`;
+          td.title = cellTooltip(la, lb, newRel, false);
         }
         updateBatchButtons();
       });
