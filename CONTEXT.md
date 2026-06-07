@@ -367,17 +367,28 @@ The `.delete-staging` CSS block was moved from `aspect_detail.css` to `common.cs
 
 ### Aspect detail view (`/aspects/<name>`)
 
-- **Batch apply workflow:** the level relations matrix uses the same pending-changes pattern as the VDiff matrix (see below).
-  Changes are accumulated in a `pendingChanges` Map (keyed by `"la|||lb"`). Each entry carries a `fromClosure` flag.
+The Level relations section uses a **tabbed layout**: a *Matrix* tab and a *Graph* tab, toggled by `tabBtnMatrix` / `tabBtnGraph` buttons in the section header. Both tabs share the same `pendingChanges` Map and the same *Apply changes* / *Discard changes* / *View closure* buttons.
+
+- **Batch apply workflow:** changes are accumulated in a `pendingChanges` Map (keyed by `"la|||lb"`). Each entry carries `{ la, lb, newRel, originalRel, fromClosure }`.
   Pending cells show the colour of the newly selected relation plus a dashed outline: amber (`#e6c200`, class `.rel-pending`) for user-initiated changes, blue (`#5c6bc0`, class `.rel-closure-pending`) for closure-staged changes.
   *Apply changes* and *Discard changes* buttons in the section header are disabled until at least one change is pending.
 - Clicking *Apply changes* POSTs all pending changes to `/api/aspects/<name>/relations/batch`.
   On success the matrix reloads and highlights clear. On collision **pending changes remain highlighted** so the user can deselect the offending relation(s) and retry.
-- **View closure button:** fetches `GET /api/aspects/<name>/relations/closure` and stages every closure addition directly into `pendingChanges` with `fromClosure: true` and the blue dashed border. Cells already in `pendingChanges` (user-modified) are skipped. If no new relations can be inferred the inference panel shows a "no new relations" message; collisions show a red panel. The button label toggles to "Hide closure" while closure-staged entries exist; clicking it again unstages them (reverts select value, class, and tooltip). A closure-staged cell is promoted to `fromClosure: false` (amber border) as soon as the user clicks its dropdown (`pointerdown`), before a value is even selected.
-- `cellElems` Map (keyed by `"la|||lb"`) stores `{ td, sel, originalRel }` for every non-diagonal cell; populated by `makeCellDropdown`, cleared by `loadRelations`. Used by `viewClosure` to look up elements.
+- **`syncMatrixCell(cellKey)`** — helper that reads the current `pendingChanges` entry for a cell and updates the `<td>` class, `<select>` value, and `title` attribute accordingly. Called by `viewClosure`, `discardPendingChanges`, `makeCellDropdown`, and `stageRelationFromGraph` to keep the matrix DOM consistent without duplicating logic.
+- **View closure button:** fetches `GET /api/aspects/<name>/relations/closure` and stages every closure addition directly into `pendingChanges` with `fromClosure: true` and the blue dashed border. Cells already in `pendingChanges` (user-modified) are skipped. If no new relations can be inferred the inference panel shows a "no new relations" message; collisions show a red panel. The button label toggles to "Hide closure" while closure-staged entries exist; clicking it again unstages them. While closure entries are staged, the *Show reduction* button in the Graph tab is **disabled** (tooltip: "Hide closure first to switch to reduction view") — this prevents an ill-defined mode where the committed transitive reduction and the closure overlay are active simultaneously.
+- A closure-staged cell is promoted to `fromClosure: false` (amber border) the moment the user interacts with its dropdown: in the **matrix**, on `pointerdown` of the `<select>`; in the **graph picker**, likewise on `pointerdown` of the picker `<select>`. Both cover the "same value" case where `change` never fires.
+- `cellElems` Map (keyed by `"la|||lb"`) stores `{ td, sel, originalRel, la, lb }` for every non-diagonal cell; populated by `makeCellDropdown`, cleared by `loadRelations`. Used by `syncMatrixCell` and `viewClosure`.
 - **Cell tooltips:** non-diagonal cells show a `title` attribute of the form `la rel lb | Click to edit. Apply changes to save.`. Closure-staged cells show `Inferred: la rel lb`.
-- `loadRelations()` always clears pending state and `cellElems` (matrix is fully replaced on every call).
+- `loadRelations()` always clears `pendingChanges` and `cellElems` (matrix is fully replaced on every call).
 - Navigating away with pending changes triggers a `beforeunload` guard.
+
+**Graph tab:**
+
+- `activateTab(name)` switches between `tabPanelMatrix` and `tabPanelGraph`, updates tab button styles, and fires `requestAnimationFrame(() => renderGraphFromState())` on switch to Graph — deferring until the container has real pixel dimensions so Vis.js measures them correctly.
+- `renderGraphFromState()` — async. Fetches committed graph data (cached in `graphCache`; invalidated by `loadRelations` / `loadLevelGraph`). Builds an `edgeMap` from committed edges, then overlays `pendingChanges`: closure entries sorted first (blue dashed), user entries sorted last (amber dashed), so user entries always win when both directions of the same cell pair appear. Pending deletions are shown as red dashed edges. Calls `mainNetwork.fit()` immediately after construction (hierarchical layout is synchronous, so the viewport is correct immediately).
+- `stageRelationFromGraph(membersA, membersB, rel)` — stages the relation for all cell pairs across the two equivalence classes into `pendingChanges` with `fromClosure: false`, calls `syncMatrixCell` for each pair, then calls `renderGraphFromState`.
+- **Node interaction:** click one node → picker label A appears; click a second node → picker label B appears and a `<select>` is populated with the current relation (pending takes priority over committed). On `pointerdown` of the picker select, any closure-staged entry for that pair is promoted to `fromClosure: false` and the graph repaints immediately (amber). On `change`, `stageRelationFromGraph` is called and the picker closes. Cancel or outside-click calls `clearFirstNode` without staging anything.
+- **TR toggle** (*Show full graph* / *Show reduction*): toggles `trStateMain` and re-renders from `graphCache`. Disabled while closure entries are staged.
 
 ### VDiff matrix view (`/vdiff-matrix`)
 

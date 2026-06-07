@@ -94,51 +94,37 @@
   <!-- ── Level relations ──────────────────────────────────────── -->
   <div class="section-header">
     <h2>Level relations</h2>
-    <button id="btnToggleGraph" class="toggle-graph-btn">Show graph</button>
+    <button id="tabBtnMatrix" class="tab-btn tab-active">Matrix</button>
+    <button id="tabBtnGraph"  class="tab-btn">Graph</button>
     <button id="btnViewClosure">View closure</button>
     <button id="btnApply"      class="primary" disabled>Apply changes</button>
     <button id="btnDiscard"                    disabled>Discard changes</button>
   </div>
   <div id="progressBar" class="progress-bar" hidden><div class="progress-bar-fill"></div></div>
 
-  <!-- Graph: hidden by default, shown above the matrix when toggled -->
-  <div id="levelGraphSection" hidden>
-
-  <!-- Relation picker (shown on first node click, active on second) -->
-  <div id="graphRelPicker" class="graph-rel-picker graph-rel-picker-hidden">
-    <span id="graphRelPickerLabelA" class="graph-rel-node-label graph-rel-placeholder">?</span>
-    <select id="graphRelPickerSel" class="graph-rel-select" disabled></select>
-    <span id="graphRelPickerLabelB" class="graph-rel-node-label graph-rel-placeholder">?</span>
-    <button id="graphRelPickerCancel" class="graph-rel-cancel">Cancel</button>
-  </div>
-    <div class="level-graph-row">
-      <div class="level-graph-col">
-        <div class="graph-col-header">
-          <h3>Defined relations</h3>
-          <button id="btnTrDefined" class="toggle-graph-btn" data-tr="true"
-                  title="Toggle between transitive reduction and full graph">
-            Show full graph
-          </button>
-        </div>
-        <div id="levelGraphDefined" class="level-graph-container"></div>
-      </div>
-      <div class="level-graph-col">
-        <div class="graph-col-header">
-          <h3>Inferred closure</h3>
-          <button id="btnTrClosure" class="toggle-graph-btn" data-tr="true"
-                  title="Toggle between transitive reduction and full graph">
-            Show full graph
-          </button>
-        </div>
-        <div id="levelGraphClosure" class="level-graph-container"></div>
-      </div>
+  <!-- ── Matrix tab ───────────────────────────────────────────── -->
+  <div id="tabPanelMatrix">
+    <div id="inferencePanel" class="inference-panel" hidden></div>
+    <div id="relationsWrapper" class="relations-wrapper">
+      <p class="muted" id="relationsPlaceholder">Loading...</p>
     </div>
   </div>
 
-  <div id="inferencePanel" class="inference-panel" hidden></div>
-
-  <div id="relationsWrapper" class="relations-wrapper">
-    <p class="muted" id="relationsPlaceholder">Loading...</p>
+  <!-- ── Graph tab ────────────────────────────────────────────── -->
+  <div id="tabPanelGraph" hidden>
+    <div class="graph-col-header">
+      <button id="btnTrMain" class="toggle-graph-btn" data-tr="true"
+              title="Toggle between transitive reduction and full graph">
+        Show full graph
+      </button>
+    </div>
+    <div id="graphRelPicker" class="graph-rel-picker graph-rel-picker-hidden">
+      <span id="graphRelPickerLabelA" class="graph-rel-node-label graph-rel-placeholder">?</span>
+      <select id="graphRelPickerSel" class="graph-rel-select" disabled></select>
+      <span id="graphRelPickerLabelB" class="graph-rel-node-label graph-rel-placeholder">?</span>
+      <button id="graphRelPickerCancel" class="graph-rel-cancel">Cancel</button>
+    </div>
+    <div id="levelGraphContainer" class="level-graph-container"></div>
   </div>
 
   <script>
@@ -456,22 +442,31 @@
     function updateClosureButton() {
       const hasClosureEntries = [...pendingChanges.values()].some(p => p.fromClosure);
       btnViewClosure.textContent = hasClosureEntries ? "Hide closure" : "View closure";
+      // Disable "Show reduction" while closure is staged: TR of (committed + closure)
+      // is not yet a named mode. Use getElementById to avoid TDZ — btnTrMain const
+      // is declared later in the script but the DOM element always exists.
+      const trBtn = document.getElementById("btnTrMain");
+      if (trBtn) {
+        trBtn.disabled = hasClosureEntries;
+        trBtn.title    = hasClosureEntries
+          ? "Hide closure first to switch to reduction view"
+          : "Toggle between transitive reduction and full graph";
+      }
     }
 
     async function viewClosure() {
       // If there are closure-staged entries, hide them (remove only fromClosure entries)
       const hasClosureEntries = [...pendingChanges.values()].some(p => p.fromClosure);
       if (hasClosureEntries) {
-        for (const [key, p] of pendingChanges) {
-          if (p.fromClosure) {
-            p.sel.value = p.originalRel;
-            p.td.className = `rel-cell rel-editable ${relCellClass(p.originalRel)}`;
-            p.td.title = cellTooltip(p.la, p.lb, p.originalRel, false);
-            pendingChanges.delete(key);
-          }
+        const closureKeys = [...pendingChanges.entries()]
+          .filter(([, p]) => p.fromClosure).map(([k]) => k);
+        for (const key of closureKeys) {
+          pendingChanges.delete(key);
+          syncMatrixCell(key);
         }
         updateBatchButtons();
         updateClosureButton();
+        if (activeTab === "graph") renderGraphFromState();
         return;
       }
 
@@ -494,14 +489,14 @@
         if (pendingChanges.has(cellKey)) continue;  // already staged by user
         const elems = cellElems.get(cellKey);
         if (!elems) continue;
-        const { td, sel, originalRel } = elems;
-        sel.value = relation;
-        pendingChanges.set(cellKey, { la, lb, newRel: relation, originalRel, sel, td, fromClosure: true });
-        td.className = `rel-cell rel-editable ${relCellClass(relation)} rel-closure-pending`;
-        td.title = cellTooltip(la, lb, relation, true);
+        pendingChanges.set(cellKey, {
+          la, lb, newRel: relation, originalRel: elems.originalRel, fromClosure: true
+        });
+        syncMatrixCell(cellKey);
       }
       updateBatchButtons();
       updateClosureButton();
+      if (activeTab === "graph") renderGraphFromState();
     }
 
     function showClosurePanel(colls, cells) {
@@ -521,14 +516,12 @@
     }
 
     function discardPendingChanges() {
-      pendingChanges.forEach(p => {
-        p.sel.value = p.originalRel;
-        p.td.className = `rel-cell rel-editable ${relCellClass(p.originalRel)}`;
-        p.td.title = cellTooltip(p.la, p.lb, p.originalRel, false);
-      });
+      const keysToReset = [...pendingChanges.keys()];
       pendingChanges.clear();
+      for (const key of keysToReset) syncMatrixCell(key);
       updateBatchButtons();
       updateClosureButton();
+      if (activeTab === "graph") renderGraphFromState();
       document.getElementById("inferencePanel").hidden = true;
     }
 
@@ -704,14 +697,13 @@
         sel.appendChild(o);
       });
 
-      cellElems.set(cellKey, { td, sel, originalRel });
+      cellElems.set(cellKey, { td, sel, originalRel, la, lb });
 
       sel.addEventListener("pointerdown", () => {
         const entry = pendingChanges.get(cellKey);
         if (!entry?.fromClosure) return;
         entry.fromClosure = false;
-        td.classList.replace("rel-closure-pending", "rel-pending");
-        td.title = cellTooltip(la, lb, entry.newRel, false);
+        syncMatrixCell(cellKey);
         updateClosureButton();
       });
 
@@ -719,18 +711,37 @@
         const newRel = sel.value;
         if (newRel === originalRel) {
           pendingChanges.delete(cellKey);
-          td.className = `rel-cell rel-editable ${relCellClass(originalRel)}`;
-          td.title = cellTooltip(la, lb, originalRel, false);
         } else {
-          pendingChanges.set(cellKey, { la, lb, newRel, originalRel, sel, td, fromClosure: false });
-          td.className = `rel-cell rel-editable ${relCellClass(newRel)} rel-pending`;
-          td.title = cellTooltip(la, lb, newRel, false);
+          pendingChanges.set(cellKey, { la, lb, newRel, originalRel, fromClosure: false });
         }
+        syncMatrixCell(cellKey);
         updateBatchButtons();
       });
 
       td.appendChild(sel);
       return sel;
+    }
+
+    // Sync a matrix cell's DOM to the current pendingChanges state (or committed if absent)
+    function syncMatrixCell(cellKey) {
+      const elems = cellElems.get(cellKey);
+      if (!elems) return;
+      const { td, sel, originalRel, la, lb } = elems;
+      const p = pendingChanges.get(cellKey);
+      if (p) {
+        sel.value = p.newRel;
+        if (p.fromClosure) {
+          td.className = `rel-cell rel-editable ${relCellClass(p.newRel)} rel-closure-pending`;
+          td.title = cellTooltip(la, lb, p.newRel, true);
+        } else {
+          td.className = `rel-cell rel-editable ${relCellClass(p.newRel)} rel-pending`;
+          td.title = cellTooltip(la, lb, p.newRel, false);
+        }
+      } else {
+        sel.value = originalRel;
+        td.className = `rel-cell rel-editable ${relCellClass(originalRel)}`;
+        td.title = cellTooltip(la, lb, originalRel, false);
+      }
     }
 
     // ── Inference panel ──────────────────────────────────────────
@@ -766,32 +777,37 @@
 
     loadRelations();
 
-    // ── Level relations graph ──────────────────────────────
-    let graphVisible = false;
-    let graphDirty   = true;   // true = needs a reload before display
+    // ── Tab switching ────────────────────────────────────────────
+    let activeTab      = "matrix";
+    let graphCache     = null;   // { defined_tr, defined_full, ... } from API
+    let mainNetwork    = null;   // vis.Network instance for the single graph
+    let levelToNodeMap = {};     // level name → vis node id
+    let trStateMain    = true;   // true = transitive reduction (default)
 
-    const btnToggleGraph    = document.getElementById("btnToggleGraph");
-    const levelGraphSection = document.getElementById("levelGraphSection");
+    const tabBtnMatrix = document.getElementById("tabBtnMatrix");
+    const tabBtnGraph  = document.getElementById("tabBtnGraph");
 
-    btnToggleGraph.addEventListener("click", async () => {
-      graphVisible = !graphVisible;
-      levelGraphSection.hidden = !graphVisible;
-      btnToggleGraph.textContent = graphVisible ? "Hide graph" : "Show graph";
-      if (graphVisible && graphDirty) {
-        await renderLevelGraph();
-        graphDirty = false;
-      }
-    });
-
-    async function loadLevelGraph() {
-      // Mark dirty; render immediately only if the graph is currently visible
-      graphDirty = true;
-      if (graphVisible) {
-        await renderLevelGraph();
-        graphDirty = false;
-      }
+    function activateTab(name) {
+      activeTab = name;
+      document.getElementById("tabPanelMatrix").hidden = (name !== "matrix");
+      document.getElementById("tabPanelGraph").hidden  = (name !== "graph");
+      tabBtnMatrix.classList.toggle("tab-active", name === "matrix");
+      tabBtnGraph.classList.toggle("tab-active",  name === "graph");
+      // Defer one animation frame so the browser lays out the newly-visible
+      // container before Vis.js measures its dimensions.
+      if (name === "graph") requestAnimationFrame(() => renderGraphFromState());
     }
 
+    tabBtnMatrix.addEventListener("click", () => activateTab("matrix"));
+    tabBtnGraph.addEventListener("click",  () => activateTab("graph"));
+
+    async function loadLevelGraph() {
+      // Invalidate cache; re-render only if graph tab is active
+      graphCache = null;
+      if (activeTab === "graph") await renderGraphFromState();
+    }
+
+    // ── Vis.js options ───────────────────────────────────────────
     const VIS_OPTIONS = {
       layout: {
         hierarchical: {
@@ -825,27 +841,29 @@
       physics: { enabled: false }
     };
 
-    function renderGraph(container, graphData, curved = false) {
-      container.innerHTML = "";
-      if (!graphData || graphData.nodes.length === 0) {
-        container.innerHTML = "<p class='muted'>No relations defined.</p>";
-        return;
+    // ── Pending edge style helper ────────────────────────────────
+    function pendingEdgeStyle(la, lb, newRel, fromClosure) {
+      if (newRel === "") {
+        return {
+          dashes: [5, 5],
+          color:  { color: "#e07070", highlight: "#e07070" },
+          title:  `Pending deletion: ${la} → ${lb}`,
+          width:  2
+        };
       }
-      const nodes = new vis.DataSet(graphData.nodes);
-      const edges = new vis.DataSet(graphData.edges.map((e, i) => ({
-        ...e, id: i, arrows: "to"
-      })));
-      const options = JSON.parse(JSON.stringify(VIS_OPTIONS));
-      options.edges.smooth = curved
-        ? { type: "curvedCW", roundness: 0.3 }
-        : { type: "straightCross" };
-      return new vis.Network(container, { nodes, edges }, options);
+      const col    = fromClosure ? "#5c6bc0" : "#e6c200";
+      const prefix = fromClosure ? "Inferred" : "Pending";
+      return {
+        dashes: [5, 5],
+        color:  { color: col, highlight: col },
+        title:  `${prefix}: ${la} ${newRel} ${lb}`,
+        width:  2
+      };
     }
 
-    // ── Graph node interaction (click two nodes to set relation) ──
-    let firstNode  = null;   // id of first selected node
-    let nodeMembers = {};    // nodeId -> members array, rebuilt on each render
-    let definedNetwork = null;  // vis.Network instance for defined graph
+    // ── Graph node interaction ───────────────────────────────────
+    let firstNode   = null;
+    let nodeMembers = {};
 
     function buildNodeMembersMap(graphData) {
       const map = {};
@@ -864,8 +882,7 @@
 
     function clearFirstNode() {
       firstNode = null;
-      if (definedNetwork) definedNetwork.unselectAll();
-      // Reset picker to empty waiting state
+      if (mainNetwork) mainNetwork.unselectAll();
       document.getElementById("graphRelPickerLabelA").textContent = "?";
       document.getElementById("graphRelPickerLabelA").classList.add("graph-rel-placeholder");
       document.getElementById("graphRelPickerLabelB").textContent = "?";
@@ -897,12 +914,13 @@
       labelBEl.textContent = labelB;
       labelBEl.classList.remove("graph-rel-placeholder");
 
-      // Determine current relation
-      const currentRel = (membersA.length && membersB.length)
-        ? (relCells[`${membersA[0]}|||${membersB[0]}`] ?? "")
-        : "";
+      // Determine current relation (pending takes priority over committed)
+      const cellKey    = membersA.length && membersB.length
+        ? `${membersA[0]}|||${membersB[0]}` : "";
+      const committed  = cellKey ? (relCells[cellKey] ?? "") : "";
+      const pending    = cellKey ? pendingChanges.get(cellKey) : null;
+      const currentRel = pending ? pending.newRel : committed;
 
-      // Build and enable dropdown
       const sel = document.getElementById("graphRelPickerSel");
       sel.innerHTML = "";
       const graphRelOptions = relOptions.filter(
@@ -916,146 +934,180 @@
         sel.appendChild(opt);
       }
 
-      // Apply immediately on change
+      // Clone to reset old listeners, then re-select current value
       const newSel = sel.cloneNode(true);
       sel.parentNode.replaceChild(newSel, sel);
-      // Re-select current value after clone
       for (const opt of newSel.options) {
         if (opt.value === currentRel) { opt.selected = true; break; }
       }
       newSel.disabled = false;
-      newSel.addEventListener("change", async () => {
+      // Graph equivalent of matrix pointerdown promotion:
+      // promote a closure-staged entry to user-staged (amber) the moment the
+      // user opens the dropdown — covers the "same value" case where "change"
+      // never fires.
+      newSel.addEventListener("pointerdown", () => {
+        if (!cellKey) return;
+        const ex = pendingChanges.get(cellKey);
+        if (ex?.fromClosure) {
+          ex.fromClosure = false;
+          syncMatrixCell(cellKey);
+          updateClosureButton();
+          renderGraphFromState();
+        }
+      });
+      newSel.addEventListener("change", () => {
         const rel = newSel.value;
         clearFirstNode();
-        await applyGraphRelation(membersA, membersB, rel);
+        stageRelationFromGraph(membersA, membersB, rel);
       });
     }
 
-    async function applyGraphRelation(membersA, membersB, rel) {
-      // Apply relation to all pairs across the two equivalence classes
+    function stageRelationFromGraph(membersA, membersB, rel) {
       for (const la of membersA) {
         for (const lb of membersB) {
-          const res = await fetch(
-            `/api/aspects/${encodeURIComponent(ASPECT_NAME)}/relations/`
-            + `${encodeURIComponent(la)}/${encodeURIComponent(lb)}`,
-            {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ relation: rel })
-            }
-          );
-          const json = await res.json().catch(() => ({}));
-          if (res.ok) {
-            relCells[`${la}|||${lb}`] = rel;
-            showInferencePanel(la, rel, lb, json.adds || [], json.inferred_adds || [], []);
+          const cellKey     = `${la}|||${lb}`;
+          const originalRel = relCells[cellKey] || "";
+          if (rel === originalRel) {
+            pendingChanges.delete(cellKey);
           } else {
-            showInferencePanel(la, rel, lb, [], [], json.colls || [json.error] || []);
-            return;  // stop on first collision
+            pendingChanges.set(cellKey, { la, lb, newRel: rel, originalRel, fromClosure: false });
           }
+          syncMatrixCell(cellKey);
         }
       }
-      // Refresh matrix and both graphs
-      await loadRelations();
-      await loadLevelGraph();
+      updateBatchButtons();
+      updateClosureButton();
+      renderGraphFromState();
     }
 
-    document.getElementById("graphRelPickerCancel").addEventListener(
-      "click", clearFirstNode
-    );
+    document.getElementById("graphRelPickerCancel").addEventListener("click", clearFirstNode);
 
-    // Dismiss on click outside the graph section
-    // Ignore canvas clicks — Vis.js handles those via its own event system
+    // Dismiss picker on click outside the graph tab panel
     document.addEventListener("click", e => {
       if (e.target.tagName === "CANVAS") return;
-      const section = document.getElementById("levelGraphSection");
-      if (section && !section.contains(e.target)) clearFirstNode();
+      const panel = document.getElementById("tabPanelGraph");
+      if (panel && !panel.contains(e.target)) clearFirstNode();
     });
 
-    // Cached graph data — holds all four variants after fetch
-    let graphCache = null;
+    // ── TR toggle ────────────────────────────────────────────────
+    const btnTrMain = document.getElementById("btnTrMain");
+    btnTrMain.addEventListener("click", () => {
+      trStateMain = !trStateMain;
+      btnTrMain.dataset.tr  = trStateMain;
+      btnTrMain.textContent = trStateMain ? "Show full graph" : "Show reduction";
+      if (graphCache) renderGraphFromState();
+    });
 
-    // Per-graph TR state: true = show transitive reduction (default)
-    const trState = { defined: true, closure: true };
+    // ── Main graph renderer ──────────────────────────────────────
+    async function renderGraphFromState() {
+      const container = document.getElementById("levelGraphContainer");
+      if (!container) return;
 
-    function currentKey(which) {
-      return which + (trState[which] ? "_tr" : "_full");
-    }
+      // Fetch committed data if not cached
+      if (!graphCache) {
+        const res = await fetch(
+          `/api/aspects/${encodeURIComponent(ASPECT_NAME)}/level-graph`
+        );
+        if (!res.ok) {
+          container.innerHTML = "<p class='muted'>Could not load graph.</p>";
+          mainNetwork = null;
+          return;
+        }
+        graphCache = await res.json();
+      }
 
-    function applyTrToggle(which) {
-      const btn = document.getElementById(
-        which === "defined" ? "btnTrDefined" : "btnTrClosure"
-      );
-      const el = document.getElementById(
-        which === "defined" ? "levelGraphDefined" : "levelGraphClosure"
-      );
-      trState[which] = !trState[which];
-      btn.dataset.tr  = trState[which];
-      btn.textContent = trState[which] ? "Show full graph" : "Show reduction";
-      if (graphCache) {
-        const net = renderGraph(el, graphCache[currentKey(which)], !trState[which]);
-        if (which === "defined" && net) {
-          nodeMembers = buildNodeMembersMap(graphCache[currentKey("defined")]);
-          definedNetwork = net;
-          definedNetwork.on("click", params => {
-            if (params.nodes.length !== 1) { clearFirstNode(); return; }
-            const clicked = params.nodes[0];
-            if (!firstNode) {
-              firstNode = clicked;
-              onFirstNodeClick(clicked);
-            } else if (firstNode === clicked) {
-              clearFirstNode();
-            } else {
-              onSecondNodeClick(firstNode, clicked);
-              firstNode = null;
-            }
+      const committedData = graphCache[trStateMain ? "defined_tr" : "defined_full"];
+      if (!committedData || committedData.nodes.length === 0) {
+        container.innerHTML = "<p class='muted'>No relations defined yet.</p>";
+        mainNetwork = null;
+        return;
+      }
+
+      // Build level → node id map
+      levelToNodeMap = {};
+      for (const n of committedData.nodes) {
+        for (const m of (n.members || [n.label])) levelToNodeMap[m] = n.id;
+      }
+      nodeMembers = buildNodeMembersMap(committedData);
+
+      // Start with committed edges (keyed by "fromId|||toId")
+      const edgeMap = new Map();
+      committedData.edges.forEach((e, i) => {
+        edgeMap.set(`${e.from}|||${e.to}`, { ...e, id: `c_${i}`, arrows: "to" });
+      });
+
+      // Overlay pending changes.
+      // Process closure-staged entries first so that user-staged entries (fromClosure:
+      // false) always win when both directions of the same relation are in pendingChanges
+      // — e.g. (A,C)=BT user-amber and (C,A)=WT closure-blue both resolve to edge A→C.
+      const pendingByPriority = [...pendingChanges.values()]
+        .sort((a, b) => (b.fromClosure ? 1 : 0) - (a.fromClosure ? 1 : 0));
+
+      let pendingIdx = 0;
+      for (const p of pendingByPriority) {
+        const { la, lb, newRel, originalRel, fromClosure } = p;
+        const fromId = levelToNodeMap[la];
+        const toId   = levelToNodeMap[lb];
+        if (fromId === undefined || toId === undefined) continue;
+
+        if (newRel === "") {
+          // Pending deletion — use originalRel to find committed edge direction
+          let delFrom = fromId, delTo = toId;
+          if (originalRel === WT || originalRel === WTE) { delFrom = toId; delTo = fromId; }
+          if (delFrom === delTo) continue;
+          const delKey   = `${delFrom}|||${delTo}`;
+          const existing = edgeMap.get(delKey);
+          const style    = pendingEdgeStyle(la, lb, newRel, fromClosure);
+          // Show even if not in current TR view, so deletion is always visible
+          edgeMap.set(delKey, existing
+            ? { ...existing, ...style }
+            : { id: `p_${pendingIdx++}`, from: delFrom, to: delTo, arrows: "to", ...style });
+        } else {
+          // Pending addition/change — direction from newRel
+          let edgeFrom = fromId, edgeTo = toId;
+          if (newRel === WT || newRel === WTE) { edgeFrom = toId; edgeTo = fromId; }
+          if (edgeFrom === edgeTo) continue;
+          const edgeKey  = `${edgeFrom}|||${edgeTo}`;
+          const existing = edgeMap.get(edgeKey);
+          const style    = pendingEdgeStyle(la, lb, newRel, fromClosure);
+          edgeMap.set(edgeKey, {
+            ...(existing || { id: `p_${pendingIdx++}`, from: edgeFrom, to: edgeTo, arrows: "to" }),
+            ...style
           });
         }
       }
-    }
 
-    document.getElementById("btnTrDefined").addEventListener(
-      "click", () => applyTrToggle("defined")
-    );
-    document.getElementById("btnTrClosure").addEventListener(
-      "click", () => applyTrToggle("closure")
-    );
+      // Build and render vis.js network
+      const visNodesDS = new vis.DataSet(committedData.nodes);
+      const visEdgesDS = new vis.DataSet([...edgeMap.values()]);
 
-    async function renderLevelGraph() {
-      const definedEl = document.getElementById("levelGraphDefined");
-      const closureEl = document.getElementById("levelGraphClosure");
-      if (!definedEl || !closureEl) return;
+      container.innerHTML = "";
+      const options = JSON.parse(JSON.stringify(VIS_OPTIONS));
+      options.edges.smooth = trStateMain
+        ? { type: "straightCross" }
+        : { type: "curvedCW", roundness: 0.3 };
+      mainNetwork = new vis.Network(
+        container, { nodes: visNodesDS, edges: visEdgesDS }, options
+      );
+      mainNetwork.on("click", params => {
+        if (params.nodes.length !== 1) { clearFirstNode(); return; }
+        const clicked = params.nodes[0];
+        if (!firstNode) {
+          firstNode = clicked;
+          onFirstNodeClick(clicked);
+        } else if (firstNode === clicked) {
+          clearFirstNode();
+        } else {
+          onSecondNodeClick(firstNode, clicked);
+          firstNode = null;
+        }
+      });
 
-      const res = await fetch(`/api/aspects/${encodeURIComponent(ASPECT_NAME)}/level-graph`);
-      if (!res.ok) {
-        definedEl.innerHTML = "<p class='muted'>Could not load graph.</p>";
-        closureEl.innerHTML = "";
-        graphCache = null;
-        return;
-      }
-      graphCache = await res.json();
-      clearFirstNode();
-
-      // Build the defined network with click interaction
-      const defData = graphCache[currentKey("defined")];
-      nodeMembers   = buildNodeMembersMap(defData);
-      definedNetwork = renderGraph(definedEl, defData, !trState["defined"]);
-      if (definedNetwork) {
-        definedNetwork.on("click", params => {
-          if (params.nodes.length !== 1) { clearFirstNode(); return; }
-          const clicked = params.nodes[0];
-          if (!firstNode) {
-            firstNode = clicked;
-            onFirstNodeClick(clicked);
-          } else if (firstNode === clicked) {
-            clearFirstNode();
-          } else {
-            onSecondNodeClick(firstNode, clicked);
-            firstNode = null;
-          }
-        });
-      }
-
-      renderGraph(closureEl, graphCache[currentKey("closure")], !trState["closure"]);
+      // Hierarchical layout positions nodes synchronously in the constructor, so
+      // fit() can be called immediately to set the correct viewport.
+      // The requestAnimationFrame in activateTab ensures the container has
+      // real pixel dimensions before this function runs on a tab switch.
+      mainNetwork.fit();
     }
   </script>
 
