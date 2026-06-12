@@ -97,14 +97,18 @@
     <button id="tabBtnMatrix" class="tab-btn tab-active">Matrix</button>
     <button id="tabBtnGraph"  class="tab-btn">Graph</button>
     <button id="btnViewClosure">View closure</button>
+    {% if dtype_raw in ('int', 'float') %}
+    <button id="btnMaximize">Maximize</button>
+    <button id="btnMinimize">Minimize</button>
+    {% endif %}
     <button id="btnApply"      class="primary" disabled>Apply changes</button>
     <button id="btnDiscard"                    disabled>Discard changes</button>
   </div>
   <div id="progressBar" class="progress-bar" hidden><div class="progress-bar-fill"></div></div>
+  <div id="inferencePanel" class="inference-panel" hidden></div>
 
   <!-- ── Matrix tab ───────────────────────────────────────────── -->
   <div id="tabPanelMatrix">
-    <div id="inferencePanel" class="inference-panel" hidden></div>
     <div id="relationsWrapper" class="relations-wrapper">
       <p class="muted" id="relationsPlaceholder">Loading...</p>
     </div>
@@ -521,6 +525,7 @@
       for (const key of keysToReset) syncMatrixCell(key);
       updateBatchButtons();
       updateClosureButton();
+      updateOrderingButtons();
       if (activeTab === "graph") renderGraphFromState();
       document.getElementById("inferencePanel").hidden = true;
     }
@@ -563,6 +568,80 @@
     btnDiscard.addEventListener("click", discardPendingChanges);
     btnViewClosure.addEventListener("click", viewClosure);
 
+    // ── Ordering (Maximize / Minimize) staging ───────────────────
+    let currentOrderingDirection = null;  // "maximize" | "minimize" | null
+
+    function updateOrderingButtons() {
+      const hasOrdering = [...pendingChanges.values()].some(p => p.fromOrdering);
+      if (!hasOrdering) currentOrderingDirection = null;
+      const btnMax = document.getElementById("btnMaximize");
+      const btnMin = document.getElementById("btnMinimize");
+      if (btnMax) btnMax.textContent = (currentOrderingDirection === "maximize") ? "Hide maximize" : "Maximize";
+      if (btnMin) btnMin.textContent = (currentOrderingDirection === "minimize") ? "Hide minimize" : "Minimize";
+    }
+
+    async function stageOrdering(direction) {
+      // Toggle off if same direction is already staged
+      const hasOrdering = [...pendingChanges.values()].some(p => p.fromOrdering);
+      if (hasOrdering) {
+        const orderingKeys = [...pendingChanges.entries()]
+          .filter(([, p]) => p.fromOrdering).map(([k]) => k);
+        for (const key of orderingKeys) {
+          pendingChanges.delete(key);
+          syncMatrixCell(key);
+        }
+        currentOrderingDirection = null;
+        updateBatchButtons();
+        updateOrderingButtons();
+        if (activeTab === "graph") renderGraphFromState();
+        return;
+      }
+
+      // Fetch pairs from server (read-only — no commit)
+      const progressBar = document.getElementById("progressBar");
+      progressBar.hidden = false;
+      try {
+        const res = await fetch(
+          `/api/aspects/${encodeURIComponent(ASPECT_NAME)}/relations/order`
+          + `?direction=${encodeURIComponent(direction)}`
+        );
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const panel = document.getElementById("inferencePanel");
+          panel.innerHTML = `<p class="asp-infer-heading"><strong>Error: ${json.error || "Unknown error"}</strong></p>`;
+          panel.className = "inference-panel asp-infer-coll";
+          panel.hidden = false;
+          return;
+        }
+        const pairs = json.pairs || [];
+        if (pairs.length === 0) return;
+
+        // Stage as fromOrdering — skip cells already pending with user changes
+        for (const { la, lb, relation } of pairs) {
+          const cellKey = `${la}|||${lb}`;
+          if (pendingChanges.has(cellKey)) continue;
+          const elems = cellElems.get(cellKey);
+          if (!elems) continue;
+          pendingChanges.set(cellKey, {
+            la, lb, newRel: relation, originalRel: elems.originalRel,
+            fromClosure: false, fromOrdering: true
+          });
+          syncMatrixCell(cellKey);
+        }
+        currentOrderingDirection = direction;
+        updateBatchButtons();
+        updateOrderingButtons();
+        if (activeTab === "graph") renderGraphFromState();
+      } finally {
+        progressBar.hidden = true;
+      }
+    }
+
+    const btnMaximize = document.getElementById("btnMaximize");
+    const btnMinimize = document.getElementById("btnMinimize");
+    if (btnMaximize) btnMaximize.addEventListener("click", () => stageOrdering("maximize"));
+    if (btnMinimize) btnMinimize.addEventListener("click", () => stageOrdering("minimize"));
+
     window.addEventListener("beforeunload", e => {
       if (pendingChanges.size > 0) {
         e.preventDefault();
@@ -576,6 +655,7 @@
       cellElems.clear();
       updateBatchButtons();
       updateClosureButton();
+      updateOrderingButtons();
 
       const res = await fetch(`/api/aspects/${encodeURIComponent(ASPECT_NAME)}/relations`);
       if (!res.ok) return;
@@ -600,11 +680,13 @@
       return `${label} | ${action}`;
     }
 
-    function cellTooltip(la, lb, rel, fromClosure) {
+    function cellTooltip(la, lb, rel, source) {
       if (rel === undefined) rel = relCells[`${la}|||${lb}`] || "";
       const relPart = rel === "" ? "?" : rel;
       const base = `${la} ${relPart} ${lb} | Click to edit. Apply changes to save.`;
-      return fromClosure ? `Inferred: ${la} ${relPart} ${lb}` : base;
+      if (source === "closure")   return `Inferred: ${la} ${relPart} ${lb}`;
+      if (source === "ordering")  return `Ordering: ${la} ${relPart} ${lb}`;
+      return base;
     }
 
     function relCellClass(rel) {
@@ -669,7 +751,7 @@
           } else {
             const rel = relCells[`${la}|||${lb}`] || "";
             td.className = `rel-cell rel-editable ${relCellClass(rel)}`;
-            td.title = cellTooltip(la, lb, rel, false);
+            td.title = cellTooltip(la, lb, rel, null);
             makeCellDropdown(td);
           }
           tr.appendChild(td);
@@ -701,10 +783,15 @@
 
       sel.addEventListener("pointerdown", () => {
         const entry = pendingChanges.get(cellKey);
-        if (!entry?.fromClosure) return;
-        entry.fromClosure = false;
-        syncMatrixCell(cellKey);
-        updateClosureButton();
+        if (entry?.fromClosure) {
+          entry.fromClosure = false;
+          syncMatrixCell(cellKey);
+          updateClosureButton();
+        } else if (entry?.fromOrdering) {
+          entry.fromOrdering = false;
+          syncMatrixCell(cellKey);
+          updateOrderingButtons();
+        }
       });
 
       sel.addEventListener("change", () => {
@@ -732,15 +819,18 @@
         sel.value = p.newRel;
         if (p.fromClosure) {
           td.className = `rel-cell rel-editable ${relCellClass(p.newRel)} rel-closure-pending`;
-          td.title = cellTooltip(la, lb, p.newRel, true);
+          td.title = cellTooltip(la, lb, p.newRel, "closure");
+        } else if (p.fromOrdering) {
+          td.className = `rel-cell rel-editable ${relCellClass(p.newRel)} rel-ordering-pending`;
+          td.title = cellTooltip(la, lb, p.newRel, "ordering");
         } else {
           td.className = `rel-cell rel-editable ${relCellClass(p.newRel)} rel-pending`;
-          td.title = cellTooltip(la, lb, p.newRel, false);
+          td.title = cellTooltip(la, lb, p.newRel, null);
         }
       } else {
         sel.value = originalRel;
         td.className = `rel-cell rel-editable ${relCellClass(originalRel)}`;
-        td.title = cellTooltip(la, lb, originalRel, false);
+        td.title = cellTooltip(la, lb, originalRel, null);
       }
     }
 
@@ -842,7 +932,7 @@
     };
 
     // ── Pending edge style helper ────────────────────────────────
-    function pendingEdgeStyle(la, lb, newRel, fromClosure) {
+    function pendingEdgeStyle(la, lb, newRel, fromClosure, fromOrdering) {
       if (newRel === "") {
         return {
           dashes: [5, 5],
@@ -851,8 +941,8 @@
           width:  2
         };
       }
-      const col    = fromClosure ? "#5c6bc0" : "#e6c200";
-      const prefix = fromClosure ? "Inferred" : "Pending";
+      const col    = fromClosure ? "#5c6bc0" : fromOrdering ? "#00897b" : "#e6c200";
+      const prefix = fromClosure ? "Inferred"  : fromOrdering ? "Ordering" : "Pending";
       return {
         dashes: [5, 5],
         color:  { color: col, highlight: col },
@@ -953,6 +1043,11 @@
           syncMatrixCell(cellKey);
           updateClosureButton();
           renderGraphFromState();
+        } else if (ex?.fromOrdering) {
+          ex.fromOrdering = false;
+          syncMatrixCell(cellKey);
+          updateOrderingButtons();
+          renderGraphFromState();
         }
       });
       newSel.addEventListener("change", () => {
@@ -1037,15 +1132,15 @@
       });
 
       // Overlay pending changes.
-      // Process closure-staged entries first so that user-staged entries (fromClosure:
-      // false) always win when both directions of the same relation are in pendingChanges
-      // — e.g. (A,C)=BT user-amber and (C,A)=WT closure-blue both resolve to edge A→C.
+      // Process closure/ordering-staged entries first so that user-staged entries
+      // always win when both directions of the same relation are in pendingChanges.
       const pendingByPriority = [...pendingChanges.values()]
-        .sort((a, b) => (b.fromClosure ? 1 : 0) - (a.fromClosure ? 1 : 0));
+        .sort((a, b) => ((b.fromClosure || b.fromOrdering) ? 1 : 0)
+                      - ((a.fromClosure || a.fromOrdering) ? 1 : 0));
 
       let pendingIdx = 0;
       for (const p of pendingByPriority) {
-        const { la, lb, newRel, originalRel, fromClosure } = p;
+        const { la, lb, newRel, originalRel, fromClosure, fromOrdering } = p;
         const fromId = levelToNodeMap[la];
         const toId   = levelToNodeMap[lb];
         if (fromId === undefined || toId === undefined) continue;
@@ -1057,7 +1152,7 @@
           if (delFrom === delTo) continue;
           const delKey   = `${delFrom}|||${delTo}`;
           const existing = edgeMap.get(delKey);
-          const style    = pendingEdgeStyle(la, lb, newRel, fromClosure);
+          const style    = pendingEdgeStyle(la, lb, newRel, fromClosure, fromOrdering);
           // Show even if not in current TR view, so deletion is always visible
           edgeMap.set(delKey, existing
             ? { ...existing, ...style }
@@ -1069,7 +1164,7 @@
           if (edgeFrom === edgeTo) continue;
           const edgeKey  = `${edgeFrom}|||${edgeTo}`;
           const existing = edgeMap.get(edgeKey);
-          const style    = pendingEdgeStyle(la, lb, newRel, fromClosure);
+          const style    = pendingEdgeStyle(la, lb, newRel, fromClosure, fromOrdering);
           edgeMap.set(edgeKey, {
             ...(existing || { id: `p_${pendingIdx++}`, from: edgeFrom, to: edgeTo, arrows: "to" }),
             ...style

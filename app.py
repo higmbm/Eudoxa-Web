@@ -740,6 +740,30 @@ def batch_patch_relations(aspect_name):
     }, 200
 
 
+@app.get("/api/aspects/<aspect_name>/relations/order")
+def order_relations(aspect_name):
+    """Return ordering relation pairs for a numerical aspect without committing.
+    Query param: direction=maximize|minimize
+    On success:   { "pairs": [{"la": ..., "lb": ..., "relation": "≻"}, ...] }
+    """
+    mgr = load_manager_or_400()
+    if aspect_name not in mgr.aspects:
+        return {"error": f"Aspect '{aspect_name}' not found"}, 404
+
+    direction = request.args.get("direction")
+    if direction not in ("maximize", "minimize"):
+        return {"error": "direction must be 'maximize' or 'minimize'"}, 400
+
+    try:
+        pairs = mgr.generate_ordering_relations(aspect_name, direction)
+    except ValueError as e:
+        return {"error": str(e)}, 400
+
+    return {
+        "pairs": [{"la": la, "lb": lb, "relation": rel} for la, lb, rel in pairs]
+    }, 200
+
+
 @app.patch("/api/aspects/<aspect_name>/levels/<level_name>")
 def patch_level(aspect_name, level_name):
     mgr = load_manager_or_400()
