@@ -324,6 +324,12 @@ button.primary:hover {
   outline-offset: -2px;
 }
 
+/* Ordering-staged (Maximize/Minimize) cells — dashed teal outline */
+.rel-ordering-pending {
+  outline: 2px dashed #00897b;
+  outline-offset: -2px;
+}
+
 .rel-better {
   background: #e6f4ea !important;   /* green tint  — ≻ ⪰ */
 }

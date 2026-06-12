@@ -1089,6 +1089,38 @@ class EudoxaManager:
             app_ac(origin, self.set_vdiff_relation(zero, vd_ab, TRUE), adds, colls)
         return (adds, colls)
 
+    def generate_ordering_relations(self, aspect: str, direction: str) -> List[Tuple]:
+        """Return (la, lb, BT) pairs for all level pairs based on direction.
+
+        direction='maximize': la ≻ lb when numeric(la) > numeric(lb)
+        direction='minimize': la ≻ lb when numeric(la) < numeric(lb)
+
+        Returns a list of (la_str, lb_str, relation) for every distinct ordered pair
+        where la != lb. Pairs where neither is strictly greater are omitted.
+        Raises ValueError if the aspect is not numerical or a level cannot be parsed.
+        """
+        a = self.get_aspect(aspect)
+        if a is None:
+            raise ValueError(f"Aspect '{aspect}' does not exist.")
+        if a.data_type not in (int, float):
+            raise ValueError(f"Aspect '{aspect}' is not numerical.")
+        if direction not in ("maximize", "minimize"):
+            raise ValueError(f"Direction must be 'maximize' or 'minimize', got '{direction}'.")
+
+        levels = list(a.levels.keys())
+        parsed = {lv: parse_type(lv, a.data_type) for lv in levels}
+
+        pairs = []
+        for la in levels:
+            for lb in levels:
+                if la == lb:
+                    continue
+                if direction == "maximize" and parsed[la] > parsed[lb]:
+                    pairs.append((la, lb, BT))
+                elif direction == "minimize" and parsed[la] < parsed[lb]:
+                    pairs.append((la, lb, BT))
+        return pairs
+
     def try_set_aspect_level_relation(self, aspect: str, la, lb, rel: str) -> Tuple:
         """Validate and commit a relation addition using the closure as a staging area.
 
