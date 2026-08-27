@@ -184,6 +184,12 @@ button.primary:hover {
   color: #7a1a1a;
 }
 
+.inference-panel.asp-infer-pending {
+  background: #fff8e1;
+  border: 1px solid #e6c200;
+  color: #6b5900;
+}
+
 .asp-infer-heading {
   margin: 0 0 0.3rem;
 }

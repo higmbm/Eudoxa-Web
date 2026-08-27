@@ -106,6 +106,7 @@
   </div>
   <div id="progressBar" class="progress-bar" hidden><div class="progress-bar-fill"></div></div>
   <div id="inferencePanel" class="inference-panel" hidden></div>
+  <div id="partialClosureWarning" class="inference-panel" hidden></div>
 
   <!-- ── Matrix tab ───────────────────────────────────────────── -->
   <div id="tabPanelMatrix">
@@ -459,6 +460,8 @@
     }
 
     async function viewClosure() {
+      clearFeedbackPanels();
+
       // If there are closure-staged entries, hide them (remove only fromClosure entries)
       const hasClosureEntries = [...pendingChanges.values()].some(p => p.fromClosure);
       if (hasClosureEntries) {
@@ -471,11 +474,20 @@
         updateBatchButtons();
         updateClosureButton();
         if (activeTab === "graph") renderGraphFromState();
+        refreshPartialClosure();
         return;
       }
 
-      // Fetch closure
-      const res = await fetch(`/api/aspects/${encodeURIComponent(ASPECT_NAME)}/relations/closure`);
+      // Fetch closure — departs from committed ∪ whatever's currently pending
+      // (manual/ordering picks), never from the committed matrix alone.
+      const changes = [...pendingChanges.values()].map(p => ({
+        la: p.la, lb: p.lb, relation: p.newRel
+      }));
+      const res = await fetch(`/api/aspects/${encodeURIComponent(ASPECT_NAME)}/relations/closure`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ changes })
+      });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         showClosurePanel(json.colls || [], []);
@@ -519,6 +531,107 @@
       panel.hidden = false;
     }
 
+    // ── Partial-closure preview (manual-add feedback) ──────────────
+    // Fired after every pendingChanges mutation from a manual pick. Recomputes
+    // from scratch each time (strip previously-inferred cells, resend the rest)
+    // rather than diffing incrementally — the restricted closure is cheap
+    // (bounded by this aspect's own level count), and this keeps the result
+    // consistent no matter how the pending set changed (a new pick, an edit, or
+    // a revert that should retract cells that depended on it).
+    let partialClosureSeq = 0;
+
+    function hidePartialClosureWarning() {
+      document.getElementById("partialClosureWarning").hidden = true;
+    }
+
+    // Only the most recent feedback should ever be on screen, regardless of
+    // which action produced it. Every pendingChanges-mutating entry point
+    // (a manual pick, View closure in either direction, Maximize/Minimize,
+    // Discard, Apply) calls this first, so a stale panel from an earlier
+    // action never lingers next to — or instead of — the current one.
+    function clearFeedbackPanels() {
+      document.getElementById("inferencePanel").hidden = true;
+      hidePartialClosureWarning();
+    }
+
+    function showPartialClosureWarning(colls) {
+      const panel = document.getElementById("partialClosureWarning");
+      panel.className = "inference-panel asp-infer-coll";
+      panel.innerHTML = `<p class="asp-infer-heading"><strong>`
+        + `This addition conflicts with other relations pending in this aspect — `
+        + `Apply will reject it.</strong></p>`
+        + `<details class="asp-infer-detail"><summary>Collisions (${colls.length})</summary>`
+        + `<ul>${colls.map(s => `<li>${s}</li>`).join("")}</ul></details>`;
+      panel.hidden = false;
+    }
+
+    function showPartialClosureInfo(cells, adds, inferredAdds) {
+      const panel = document.getElementById("partialClosureWarning");
+      // Amber, not green: these cells are only staged, not committed — using
+      // Apply's own "committed" green here would read as "already saved."
+      panel.className = "inference-panel asp-infer-pending";
+      let inner = `<p class="asp-infer-heading"><strong>`
+        + `Also inferred locally from this addition (${cells.length}).</strong></p>`;
+      inner += collapsible("Your change", adds);
+      inner += collapsible("Inferred locally", inferredAdds);
+      panel.innerHTML = inner;
+      panel.hidden = false;
+    }
+
+    async function refreshPartialClosure() {
+      clearFeedbackPanels();
+
+      // Drop previously-inferred cells; they'll be recomputed (or not) below.
+      for (const [key, p] of [...pendingChanges.entries()]) {
+        if (p.fromPartialClosure) {
+          pendingChanges.delete(key);
+          syncMatrixCell(key);
+        }
+      }
+      updateBatchButtons();
+
+      const changes = [...pendingChanges.values()].map(p => ({
+        la: p.la, lb: p.lb, relation: p.newRel
+      }));
+      if (changes.length === 0) return;
+
+      const seq = ++partialClosureSeq;
+      const res = await fetch(
+        `/api/aspects/${encodeURIComponent(ASPECT_NAME)}/relations/partial-closure`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ changes })
+        }
+      );
+      if (seq !== partialClosureSeq) return;  // superseded by a newer edit
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        showPartialClosureWarning(json.colls || (json.error ? [json.error] : []));
+        return;
+      }
+
+      const applied = [];
+      for (const { la, lb, relation } of json.cells || []) {
+        const cellKey = `${la}|||${lb}`;
+        if (pendingChanges.has(cellKey)) continue;  // already pending from user/closure/ordering
+        const elems = cellElems.get(cellKey);
+        if (!elems) continue;
+        pendingChanges.set(cellKey, {
+          la, lb, newRel: relation, originalRel: elems.originalRel,
+          fromClosure: false, fromPartialClosure: true
+        });
+        syncMatrixCell(cellKey);
+        applied.push({ la, lb, relation });
+      }
+      updateBatchButtons();
+      if (activeTab === "graph") renderGraphFromState();
+      if (applied.length > 0) {
+        showPartialClosureInfo(applied, json.adds || [], json.inferred_adds || []);
+      }
+    }
+
     function discardPendingChanges() {
       const keysToReset = [...pendingChanges.keys()];
       pendingChanges.clear();
@@ -527,7 +640,7 @@
       updateClosureButton();
       updateOrderingButtons();
       if (activeTab === "graph") renderGraphFromState();
-      document.getElementById("inferencePanel").hidden = true;
+      clearFeedbackPanels();
     }
 
     async function applyPendingChanges() {
@@ -548,6 +661,10 @@
           }
         );
         const json = await res.json().catch(() => ({}));
+        // Apply's own result (below) is authoritative either way, so any
+        // feedback from before this click — success or collision, from Apply
+        // or from the partial-closure preview — is now stale.
+        clearFeedbackPanels();
         if (res.ok) {
           pendingChanges.clear();
           updateBatchButtons();
@@ -581,6 +698,8 @@
     }
 
     async function stageOrdering(direction) {
+      clearFeedbackPanels();
+
       // Toggle off if same direction is already staged
       const hasOrdering = [...pendingChanges.values()].some(p => p.fromOrdering);
       if (hasOrdering) {
@@ -686,6 +805,7 @@
       const base = `${la} ${relPart} ${lb} | Click to edit. Apply changes to save.`;
       if (source === "closure")   return `Inferred: ${la} ${relPart} ${lb}`;
       if (source === "ordering")  return `Ordering: ${la} ${relPart} ${lb}`;
+      if (source === "local")     return `Inferred (local): ${la} ${relPart} ${lb}`;
       return base;
     }
 
@@ -803,6 +923,7 @@
         }
         syncMatrixCell(cellKey);
         updateBatchButtons();
+        refreshPartialClosure();
       });
 
       td.appendChild(sel);
@@ -825,7 +946,7 @@
           td.title = cellTooltip(la, lb, p.newRel, "ordering");
         } else {
           td.className = `rel-cell rel-editable ${relCellClass(p.newRel)} rel-pending`;
-          td.title = cellTooltip(la, lb, p.newRel, null);
+          td.title = cellTooltip(la, lb, p.newRel, p.fromPartialClosure ? "local" : null);
         }
       } else {
         sel.value = originalRel;
@@ -932,7 +1053,7 @@
     };
 
     // ── Pending edge style helper ────────────────────────────────
-    function pendingEdgeStyle(la, lb, newRel, fromClosure, fromOrdering) {
+    function pendingEdgeStyle(la, lb, newRel, fromClosure, fromOrdering, fromPartialClosure) {
       if (newRel === "") {
         return {
           dashes: [5, 5],
@@ -942,7 +1063,8 @@
         };
       }
       const col    = fromClosure ? "#5c6bc0" : fromOrdering ? "#00897b" : "#e6c200";
-      const prefix = fromClosure ? "Inferred"  : fromOrdering ? "Ordering" : "Pending";
+      const prefix = fromClosure ? "Inferred"  : fromOrdering ? "Ordering"
+                   : fromPartialClosure ? "Inferred (local)" : "Pending";
       return {
         dashes: [5, 5],
         color:  { color: col, highlight: col },
@@ -1073,6 +1195,7 @@
       updateBatchButtons();
       updateClosureButton();
       renderGraphFromState();
+      refreshPartialClosure();
     }
 
     document.getElementById("graphRelPickerCancel").addEventListener("click", clearFirstNode);
@@ -1140,7 +1263,7 @@
 
       let pendingIdx = 0;
       for (const p of pendingByPriority) {
-        const { la, lb, newRel, originalRel, fromClosure, fromOrdering } = p;
+        const { la, lb, newRel, originalRel, fromClosure, fromOrdering, fromPartialClosure } = p;
         const fromId = levelToNodeMap[la];
         const toId   = levelToNodeMap[lb];
         if (fromId === undefined || toId === undefined) continue;
@@ -1152,7 +1275,7 @@
           if (delFrom === delTo) continue;
           const delKey   = `${delFrom}|||${delTo}`;
           const existing = edgeMap.get(delKey);
-          const style    = pendingEdgeStyle(la, lb, newRel, fromClosure, fromOrdering);
+          const style    = pendingEdgeStyle(la, lb, newRel, fromClosure, fromOrdering, fromPartialClosure);
           // Show even if not in current TR view, so deletion is always visible
           edgeMap.set(delKey, existing
             ? { ...existing, ...style }
@@ -1164,7 +1287,7 @@
           if (edgeFrom === edgeTo) continue;
           const edgeKey  = `${edgeFrom}|||${edgeTo}`;
           const existing = edgeMap.get(edgeKey);
-          const style    = pendingEdgeStyle(la, lb, newRel, fromClosure, fromOrdering);
+          const style    = pendingEdgeStyle(la, lb, newRel, fromClosure, fromOrdering, fromPartialClosure);
           edgeMap.set(edgeKey, {
             ...(existing || { id: `p_${pendingIdx++}`, from: edgeFrom, to: edgeTo, arrows: "to" }),
             ...style

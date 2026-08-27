@@ -320,6 +320,124 @@ def app_ac(origin: List, ac: Tuple, adds: List, colls: List) -> Tuple:
         colls.append([origin[0], origin[1], coll])
     return (adds, colls)
 
+# For each closure() rule label, which (vd1, vd2) pairs within its origin_detail
+# are the premises it depended on — used to order an `adds` list so every entry
+# comes after whichever earlier entry (if any) in the *same* list established
+# each of its premises. SETREL isn't listed: it's a leaf (an explicit user
+# action, not derived from anything else in the list).
+_RULE_PREMISE_VD_PAIRS = {
+    'DiffP':             lambda d: [(d[0], d[2])],
+    'NegDiffP':          lambda d: [(d[0], d[2])],
+    'TransP':            lambda d: [(d[0], d[2]), (d[2], d[4])],
+    'InvP_R':            lambda d: [(d[0], d[2]), (d[2], d[4])],
+    'InvP_L':            lambda d: [(d[0], d[2]), (d[2], d[4])],
+    'NegTransP':         lambda d: [(d[0], d[2]), (d[2], d[4])],
+    'NegTransP_DEQ_L':   lambda d: [(d[0], d[2]), (d[2], d[4])],
+    'NegTransP_DEQ_R':   lambda d: [(d[0], d[2]), (d[2], d[4])],
+    'NegInvP_L':         lambda d: [(d[0], d[2]), (d[2], d[4])],
+    'NegInvP_R':         lambda d: [(d[0], d[2]), (d[2], d[4])],
+}
+
+
+def _entry_conclusion_key(entry):
+    """(vd1_key, vd2_key) for the fact a closure() `adds` entry established."""
+    _, _, result = entry
+    vd1, _rel, vd2 = result
+    return (_vdiff_key(vd1), _vdiff_key(vd2))
+
+
+def _entry_premise_keys(entry):
+    """(vd1_key, vd2_key) pairs for the premises a closure() `adds` entry used."""
+    origin_type, origin_detail, _result = entry
+    extractor = _RULE_PREMISE_VD_PAIRS.get(origin_type)
+    if not extractor:
+        return []
+    return [(_vdiff_key(vd1), _vdiff_key(vd2)) for vd1, vd2 in extractor(origin_detail)]
+
+
+def _topological_sort_adds(adds: List) -> List:
+    """Reorder a closure() `adds` list so every entry appears after whichever
+    entry (if any, within this same list) established each of its premises.
+
+    Since set_vdiff_relation only ever writes a given (vd1, vd2) cell once (a
+    repeat of the same value is a no-op, a conflicting one is a collision that
+    aborts the computation), each fact has at most one entry that established
+    it, so the entry -> premise-entries mapping is unambiguous. Ties (entries
+    with no ordering constraint between them) keep the lowest original index
+    first, so the result stays close to natural discovery order except where a
+    real dependency forces a change. O(n) entries, O(1)-ish premises each, so
+    this is cheap even for the larger end of a closure's `adds` list.
+    """
+    n = len(adds)
+    by_conclusion = {}
+    for i, entry in enumerate(adds):
+        by_conclusion.setdefault(_entry_conclusion_key(entry), i)
+
+    depends_on = [set() for _ in range(n)]
+    dependents = [[] for _ in range(n)]
+    for i, entry in enumerate(adds):
+        for premise_key in _entry_premise_keys(entry):
+            j = by_conclusion.get(premise_key)
+            if j is not None and j != i:
+                depends_on[i].add(j)
+                dependents[j].append(i)
+
+    indegree = [len(depends_on[i]) for i in range(n)]
+    ready = [i for i in range(n) if indegree[i] == 0]
+    order = []
+    while ready:
+        ready.sort()
+        i = ready.pop(0)
+        order.append(i)
+        for k in dependents[i]:
+            indegree[k] -= 1
+            if indegree[k] == 0:
+                ready.append(k)
+
+    if len(order) != n:  # pragma: no cover — shouldn't happen, the DAG is acyclic
+        order.extend(i for i in range(n) if i not in order)
+    return [adds[i] for i in order]
+
+
+def _apply_al_relation(matrix, aspect: str, la_str: str, lb_str: str, rel: str) -> Tuple:
+    """Write the vdcm entries for one AL relation (BT/BTE/EQ/WTE/WT/UNDEFINED)
+    between la_str and lb_str into *matrix*. Shared by set_aspect_level_relation
+    and try_set_aspect_level_relation (staging and commit phases) and by
+    try_stage_aspect_level_relations, so the BT/BTE/EQ/WTE/WT -> vdcm-entry
+    mapping lives in exactly one place. Returns (adds, colls)."""
+    adds, colls = [], []
+    zero  = NATURAL_ZERO
+    vd_ab = VDiff(aspect, la_str, lb_str)
+    vd_ba = VDiff(aspect, lb_str, la_str)
+    origin = ['SETREL', [aspect, la_str, rel, lb_str]]
+    if rel == UNDEFINED:
+        app_ac(origin, set_vdiff_relation(matrix, vd_ab, zero, UNDEFINED), adds, colls)
+        app_ac(origin, set_vdiff_relation(matrix, vd_ba, zero, UNDEFINED), adds, colls)
+        app_ac(origin, set_vdiff_relation(matrix, zero, vd_ab, UNDEFINED), adds, colls)
+        app_ac(origin, set_vdiff_relation(matrix, zero, vd_ba, UNDEFINED), adds, colls)
+    elif rel == BT:
+        app_ac(origin, set_vdiff_relation(matrix, vd_ab, zero, TRUE),  adds, colls)
+        app_ac(origin, set_vdiff_relation(matrix, vd_ba, zero, FALSE), adds, colls)
+        app_ac(origin, set_vdiff_relation(matrix, zero, vd_ab, FALSE), adds, colls)
+        app_ac(origin, set_vdiff_relation(matrix, zero, vd_ba, TRUE),  adds, colls)
+    elif rel == BTE:
+        app_ac(origin, set_vdiff_relation(matrix, vd_ab, zero, TRUE),  adds, colls)
+        app_ac(origin, set_vdiff_relation(matrix, zero, vd_ba, TRUE),  adds, colls)
+    elif rel == EQ:
+        app_ac(origin, set_vdiff_relation(matrix, vd_ab, zero, TRUE),  adds, colls)
+        app_ac(origin, set_vdiff_relation(matrix, vd_ba, zero, TRUE),  adds, colls)
+        app_ac(origin, set_vdiff_relation(matrix, zero, vd_ab, TRUE),  adds, colls)
+        app_ac(origin, set_vdiff_relation(matrix, zero, vd_ba, TRUE),  adds, colls)
+    elif rel == WTE:
+        app_ac(origin, set_vdiff_relation(matrix, vd_ba, zero, TRUE),  adds, colls)
+        app_ac(origin, set_vdiff_relation(matrix, zero, vd_ab, TRUE),  adds, colls)
+    elif rel == WT:
+        app_ac(origin, set_vdiff_relation(matrix, vd_ba, zero, TRUE),  adds, colls)
+        app_ac(origin, set_vdiff_relation(matrix, vd_ab, zero, FALSE), adds, colls)
+        app_ac(origin, set_vdiff_relation(matrix, zero, vd_ba, FALSE), adds, colls)
+        app_ac(origin, set_vdiff_relation(matrix, zero, vd_ab, TRUE),  adds, colls)
+    return (adds, colls)
+
 from itertools import product
 
 import openpyxl
@@ -1046,7 +1164,6 @@ class EudoxaManager:
             del self.consequences[name]
 
     def set_aspect_level_relation(self, aspect: str, la, lb, rel: str) -> Tuple:
-        adds, colls = [], []
         a = self.get_aspect(aspect)
         a_type = a.data_type
         la_str, lb_str = str(la), str(lb)
@@ -1056,38 +1173,7 @@ class EudoxaManager:
             raise ValueError(f"Aspect level '{la}' [{a_type}] does not exist.")
         if not lb_str in a.levels:
             raise ValueError(f"Aspect level '{lb}' [{a_type}] does not exist.")
-        zero = NATURAL_ZERO
-        vd_ab = VDiff(aspect, la_str, lb_str)
-        vd_ba = VDiff(aspect, lb_str, la_str)
-
-        origin = ['SETREL', [aspect, la_str, rel, lb_str]]
-        if rel == UNDEFINED:
-            app_ac(origin, self.set_vdiff_relation(vd_ab, zero, UNDEFINED), adds, colls)
-            app_ac(origin, self.set_vdiff_relation(vd_ba, zero, UNDEFINED), adds, colls)
-            app_ac(origin, self.set_vdiff_relation(zero, vd_ab, UNDEFINED), adds, colls)
-            app_ac(origin, self.set_vdiff_relation(zero, vd_ba, UNDEFINED), adds, colls)
-        elif rel == BT:
-            app_ac(origin, self.set_vdiff_relation(vd_ab, zero, TRUE), adds, colls)
-            app_ac(origin, self.set_vdiff_relation(vd_ba, zero, FALSE), adds, colls)
-            app_ac(origin, self.set_vdiff_relation(zero, vd_ab, FALSE), adds, colls)
-            app_ac(origin, self.set_vdiff_relation(zero, vd_ba, TRUE), adds, colls)
-        elif rel == BTE:
-            app_ac(origin, self.set_vdiff_relation(vd_ab, zero, TRUE), adds, colls)
-            app_ac(origin, self.set_vdiff_relation(zero, vd_ba, TRUE), adds, colls)
-        elif rel == EQ:
-            app_ac(origin, self.set_vdiff_relation(vd_ab, zero, TRUE), adds, colls)
-            app_ac(origin, self.set_vdiff_relation(vd_ba, zero, TRUE), adds, colls)
-            app_ac(origin, self.set_vdiff_relation(zero, vd_ab, TRUE), adds, colls)
-            app_ac(origin, self.set_vdiff_relation(zero, vd_ba, TRUE), adds, colls)
-        elif rel == WTE:
-            app_ac(origin, self.set_vdiff_relation(vd_ba, zero, TRUE), adds, colls)
-            app_ac(origin, self.set_vdiff_relation(zero, vd_ab, TRUE), adds, colls)
-        elif rel == WT:
-            app_ac(origin, self.set_vdiff_relation(vd_ba, zero, TRUE), adds, colls)
-            app_ac(origin, self.set_vdiff_relation(vd_ab, zero, FALSE), adds, colls)
-            app_ac(origin, self.set_vdiff_relation(zero, vd_ba, FALSE), adds, colls)
-            app_ac(origin, self.set_vdiff_relation(zero, vd_ab, TRUE), adds, colls)
-        return (adds, colls)
+        return _apply_al_relation(self.vdiff_comparison_matrix, aspect, la_str, lb_str, rel)
 
     def generate_ordering_relations(self, aspect: str, direction: str) -> List[Tuple]:
         """Return (la, lb, BT) pairs for all level pairs based on direction.
@@ -1133,7 +1219,6 @@ class EudoxaManager:
           6. If clean, commit only the explicit addition to the matrix.
              Return direct adds and any inferred additions from the closure.
         """
-        import copy
         a = self.get_aspect(aspect)
         a_type = a.data_type
         la_str, lb_str = str(la), str(lb)
@@ -1148,37 +1233,7 @@ class EudoxaManager:
         staged, _, _ = self.closure()
 
         # Step 2: apply the requested addition to the staging area
-        zero  = NATURAL_ZERO
-        vd_ab = VDiff(aspect, la_str, lb_str)
-        vd_ba = VDiff(aspect, lb_str, la_str)
-        origin = ['SETREL', [aspect, la_str, rel, lb_str]]
-        staged_adds, staged_colls = [], []
-        if rel == UNDEFINED:
-            app_ac(origin, set_vdiff_relation(staged, vd_ab, zero, UNDEFINED), staged_adds, staged_colls)
-            app_ac(origin, set_vdiff_relation(staged, vd_ba, zero, UNDEFINED), staged_adds, staged_colls)
-            app_ac(origin, set_vdiff_relation(staged, zero, vd_ab, UNDEFINED), staged_adds, staged_colls)
-            app_ac(origin, set_vdiff_relation(staged, zero, vd_ba, UNDEFINED), staged_adds, staged_colls)
-        elif rel == BT:
-            app_ac(origin, set_vdiff_relation(staged, vd_ab, zero, TRUE),  staged_adds, staged_colls)
-            app_ac(origin, set_vdiff_relation(staged, vd_ba, zero, FALSE), staged_adds, staged_colls)
-            app_ac(origin, set_vdiff_relation(staged, zero, vd_ab, FALSE), staged_adds, staged_colls)
-            app_ac(origin, set_vdiff_relation(staged, zero, vd_ba, TRUE),  staged_adds, staged_colls)
-        elif rel == BTE:
-            app_ac(origin, set_vdiff_relation(staged, vd_ab, zero, TRUE),  staged_adds, staged_colls)
-            app_ac(origin, set_vdiff_relation(staged, zero, vd_ba, TRUE),  staged_adds, staged_colls)
-        elif rel == EQ:
-            app_ac(origin, set_vdiff_relation(staged, vd_ab, zero, TRUE),  staged_adds, staged_colls)
-            app_ac(origin, set_vdiff_relation(staged, vd_ba, zero, TRUE),  staged_adds, staged_colls)
-            app_ac(origin, set_vdiff_relation(staged, zero, vd_ab, TRUE),  staged_adds, staged_colls)
-            app_ac(origin, set_vdiff_relation(staged, zero, vd_ba, TRUE),  staged_adds, staged_colls)
-        elif rel == WTE:
-            app_ac(origin, set_vdiff_relation(staged, vd_ba, zero, TRUE),  staged_adds, staged_colls)
-            app_ac(origin, set_vdiff_relation(staged, zero, vd_ab, TRUE),  staged_adds, staged_colls)
-        elif rel == WT:
-            app_ac(origin, set_vdiff_relation(staged, vd_ba, zero, TRUE),  staged_adds, staged_colls)
-            app_ac(origin, set_vdiff_relation(staged, vd_ab, zero, FALSE), staged_adds, staged_colls)
-            app_ac(origin, set_vdiff_relation(staged, zero, vd_ba, FALSE), staged_adds, staged_colls)
-            app_ac(origin, set_vdiff_relation(staged, zero, vd_ab, TRUE),  staged_adds, staged_colls)
+        _, staged_colls = _apply_al_relation(staged, aspect, la_str, lb_str, rel)
 
         # Step 3: immediate collision in the staged area — reject
         if staged_colls:
@@ -1196,36 +1251,16 @@ class EudoxaManager:
             return ([], inferred_colls, [])
 
         # Step 6: clean — commit only the explicit addition to the real matrix
-        adds, colls = [], []
-        if rel == UNDEFINED:
-            app_ac(origin, set_vdiff_relation(original_matrix, vd_ab, zero, UNDEFINED), adds, colls)
-            app_ac(origin, set_vdiff_relation(original_matrix, vd_ba, zero, UNDEFINED), adds, colls)
-            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ab, UNDEFINED), adds, colls)
-            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ba, UNDEFINED), adds, colls)
-        elif rel == BT:
-            app_ac(origin, set_vdiff_relation(original_matrix, vd_ab, zero, TRUE),  adds, colls)
-            app_ac(origin, set_vdiff_relation(original_matrix, vd_ba, zero, FALSE), adds, colls)
-            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ab, FALSE), adds, colls)
-            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ba, TRUE),  adds, colls)
-        elif rel == BTE:
-            app_ac(origin, set_vdiff_relation(original_matrix, vd_ab, zero, TRUE),  adds, colls)
-            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ba, TRUE),  adds, colls)
-        elif rel == EQ:
-            app_ac(origin, set_vdiff_relation(original_matrix, vd_ab, zero, TRUE),  adds, colls)
-            app_ac(origin, set_vdiff_relation(original_matrix, vd_ba, zero, TRUE),  adds, colls)
-            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ab, TRUE),  adds, colls)
-            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ba, TRUE),  adds, colls)
-        elif rel == WTE:
-            app_ac(origin, set_vdiff_relation(original_matrix, vd_ba, zero, TRUE),  adds, colls)
-            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ab, TRUE),  adds, colls)
-        elif rel == WT:
-            app_ac(origin, set_vdiff_relation(original_matrix, vd_ba, zero, TRUE),  adds, colls)
-            app_ac(origin, set_vdiff_relation(original_matrix, vd_ab, zero, FALSE), adds, colls)
-            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ba, FALSE), adds, colls)
-            app_ac(origin, set_vdiff_relation(original_matrix, zero, vd_ab, TRUE),  adds, colls)
+        adds, colls = _apply_al_relation(original_matrix, aspect, la_str, lb_str, rel)
         return (adds, [], inferred_adds)
 
-    def get_aspect_level_relation(self, aspect: str, la, lb) -> str:
+    def get_aspect_level_relation(self, aspect: str, la, lb, matrix=None) -> str:
+        """Derive the BT/BTE/EQ/WTE/WT relation between two levels of an aspect.
+
+        By default reads the live vdcm. Pass *matrix* (e.g. a closure copy from
+        closure()) to derive the relation against an arbitrary staged matrix
+        instead, without touching self.vdiff_comparison_matrix.
+        """
         a = self.get_aspect(aspect)
         a_type = a.data_type
         la_str, lb_str = str(la), str(lb)
@@ -1237,8 +1272,12 @@ class EudoxaManager:
             raise ValueError(f"Aspect level '{lb}' [{a_type}] does not exist.")
         zero = NATURAL_ZERO
         vd_ab = VDiff(aspect, la_str, lb_str)
-        rel_ab_z = self.get_vdiff_relation(vd_ab, zero)
-        rel_z_ab = self.get_vdiff_relation(zero, vd_ab)
+        if matrix is None:
+            rel_ab_z = self.get_vdiff_relation(vd_ab, zero)
+            rel_z_ab = self.get_vdiff_relation(zero, vd_ab)
+        else:
+            rel_ab_z = get_vdiff_relation(matrix, vd_ab, zero)
+            rel_z_ab = get_vdiff_relation(matrix, zero, vd_ab)
         if rel_ab_z == TRUE and rel_z_ab == FALSE:
             return BT
         elif rel_ab_z == TRUE and rel_z_ab == UNDEFINED:
@@ -1256,7 +1295,90 @@ class EudoxaManager:
 
     def get_vdiff_relation(self, vd1: VDiff, vd2: VDiff) -> str:
         return get_vdiff_relation(self.vdiff_comparison_matrix, vd1, vd2)
-    
+
+    def closure_cells_for_aspect(self, aspect_name: str, closure_matrix, exclude_pairs=()) -> List[dict]:
+        """Extract AL-relation cells inferable from *closure_matrix* for one aspect.
+
+        For every ordered (la, lb) pair of the aspect's levels (la != lb), skips
+        pairs in exclude_pairs and pairs already committed in the live matrix,
+        then derives the relation from closure_matrix via
+        get_aspect_level_relation(..., matrix=closure_matrix). Returns
+        [{"la", "lb", "relation"}, ...] for every pair where a relation could be
+        derived that isn't already known.
+        """
+        aspect = self.get_aspect(aspect_name)
+        levels = list(aspect.levels.keys())
+        exclude = set(exclude_pairs)
+        cells = []
+        for la in levels:
+            for lb in levels:
+                if la == lb or (la, lb) in exclude:
+                    continue
+                if self.get_aspect_level_relation(aspect_name, la, lb) != UNDEFINED:
+                    continue
+                clos_rel = self.get_aspect_level_relation(aspect_name, la, lb, matrix=closure_matrix)
+                if clos_rel in (UNDEFINED, NotImplemented):
+                    continue
+                cells.append({"la": la, "lb": lb, "relation": clos_rel})
+        return cells
+
+    def try_stage_aspect_level_relations(self, aspect_name: str, changes: List[Tuple[str, str, str]],
+                                          restrict_to_aspect: bool = False) -> Tuple:
+        """Preview the effect of staging *changes* — a list of (la, lb, rel)
+        tuples for aspect_name — without committing anything.
+
+        Applies all changes to a scratch copy of the vdcm, then computes the
+        closure of that copy: restricted to aspect_name's own VDiffs when
+        restrict_to_aspect is True (cheap, local — used for the manual-add
+        preview), or the full cross-aspect closure when False (used by "View
+        closure", so it departs from committed ∪ currently pending changes
+        rather than the committed matrix alone). self.vdiff_comparison_matrix is
+        never modified.
+
+        Returns (cells, adds, inferred_adds, colls):
+          - On an immediate or closure-derived collision: ([], [], [], colls).
+          - Otherwise: (cells, adds, inferred_adds, []), where cells are the
+            newly-inferable AL relations for aspect_name not already covered by
+            *changes* or the live matrix; adds are the raw vdcm writes for
+            *changes* itself and inferred_adds the closure-derived consequences
+            that produced cells — both as [origin_type, origin_detail, result]
+            triples, same shape as try_set_aspect_level_relation's adds /
+            inferred_adds, formattable with the caller's _fmt_al_entry. This
+            lets the preview surface the same "why" detail as the Apply-time
+            inference panel, not just the flat cells list.
+        """
+        a = self.get_aspect(aspect_name)
+        if a is None:
+            raise ValueError(f"Aspect '{aspect_name}' does not exist.")
+        for la, lb, _rel in changes:
+            for lvl in (str(la), str(lb)):
+                if lvl not in a.levels:
+                    raise ValueError(f"Aspect level '{lvl}' does not exist in aspect '{aspect_name}'.")
+
+        staged = {vd1: dict(row) for vd1, row in self.vdiff_comparison_matrix.items()}
+        exclude_pairs = set()
+        adds = []
+        for la, lb, rel in changes:
+            la_str, lb_str = str(la), str(lb)
+            exclude_pairs.add((la_str, lb_str))
+            staged_adds, staged_colls = _apply_al_relation(staged, aspect_name, la_str, lb_str, rel)
+            if staged_colls:
+                return ([], [], [], staged_colls)
+            adds.extend(staged_adds)
+
+        original_matrix = self.vdiff_comparison_matrix
+        self.vdiff_comparison_matrix = staged
+        closure_matrix, inferred_adds, closure_colls = self.closure(
+            restrict_to_aspect=aspect_name if restrict_to_aspect else None
+        )
+        self.vdiff_comparison_matrix = original_matrix
+
+        if closure_colls:
+            return ([], [], [], closure_colls)
+
+        cells = self.closure_cells_for_aspect(aspect_name, closure_matrix, exclude_pairs=exclude_pairs)
+        return (cells, adds, inferred_adds, [])
+
     def try_set_vdiff_order_relation(self,
                                       vd1: VDiff, vd2: VDiff,
                                       order_rel: str) -> Tuple:
@@ -1286,7 +1408,7 @@ class EudoxaManager:
         an1, l1a, l1b = vd1.aspect_name, vd1.from_level, vd1.to_level
         an2, l2a, l2b = vd2.aspect_name, vd2.from_level, vd2.to_level
 
-        origin = ['SETVDREL', [repr(vd1), order_rel, repr(vd2)]]
+        origin = ['SETVDREL', [vd1, order_rel, vd2]]
 
         # ── Step 1: deep-copy the VDCM ──────────────────────────
         staged_matrix = copy.deepcopy(self.vdiff_comparison_matrix)
@@ -1388,8 +1510,9 @@ class EudoxaManager:
         # TODO: Error handling
         return neg(VDiff(an, la, lb), self.aspects[an], self.vdiff_comparison_matrix)
     
-    def vd_enum_verbose(self):
-        for a in self.aspects.values():
+    def vd_enum_verbose(self, aspect_name=None):
+        aspects = self.aspects.values() if aspect_name is None else [self.aspects[aspect_name]]
+        for a in aspects:
             for l_from in a.levels:
                 for l_to in a.levels:
                     yield VDiff(a.name, l_from, l_to)
@@ -1405,7 +1528,18 @@ class EudoxaManager:
             for vd2, rel in row.items():
                 yield (vd1, vd2, rel)
 
-    def closure(self):
+    def closure(self, restrict_to_aspect=None):
+        """Compute the transitive closure of the vdcm.
+
+        If restrict_to_aspect is given, both phases are limited to that aspect's
+        own VDiffs (plus the shared NATURAL_ZERO bridge): Phase 1 only scans that
+        aspect, and Phase 2's pivot/endpoints only range over its VDiffs. This
+        skips the expensive cross-aspect propagation and is therefore cheaper but
+        incomplete — it can miss inferences that require pivoting through another
+        aspect's VDiff. It never produces a false negative on collisions, though:
+        restriction only removes inference paths, so any collision it does find
+        is also present in the unrestricted closure.
+        """
         adds, colls = [], []
         # Shallow copy: each inner row dict is a new dict so writes don't touch self.vdiff_comparison_matrix
         closure = {vd1: dict(row) for vd1, row in self.vdiff_comparison_matrix.items()}
@@ -1414,7 +1548,9 @@ class EudoxaManager:
         while len(adds) != prev_adds:
             prev_adds = len(adds)
             # Phase 1: DiffP / NegDiffP (same-aspect only)
-            for asp_name, asp in self.aspects.items():
+            asp_items = self.aspects.items() if restrict_to_aspect is None \
+                else [(restrict_to_aspect, self.aspects[restrict_to_aspect])]
+            for asp_name, asp in asp_items:
                 for c in asp.levels:
                     for d in asp.levels:
                         cd = VDiff(asp_name, c, d)
@@ -1430,16 +1566,16 @@ class EudoxaManager:
                                 elif rel_cd_ef == FALSE: # cd⋣ef => fd⋣ec
                                     fd = VDiff(asp_name, f, d)
                                     ec = VDiff(asp_name, e, c)
-                                    origin = ['NegDiffP', [fd, rel_cd_ef, ec]]
+                                    origin = ['NegDiffP', [cd, rel_cd_ef, ef]]
                                     app_ac(origin, set_vdiff_relation(closure, fd, ec, FALSE), adds, colls)
                                 if colls: # A collision has occurred — abort
                                     return (closure, adds, colls)
             # Phase 2: TransP / InvP / NegTransP / NegInvP (cd as pivot)
-            for cd in self.vd_enum_verbose():
-                for ab in self.vd_enum_verbose():
+            for cd in self.vd_enum_verbose(restrict_to_aspect):
+                for ab in self.vd_enum_verbose(restrict_to_aspect):
                     rel_ab_cd = get_vdiff_relation(closure, ab, cd)
                     if rel_ab_cd == TRUE: # ab⊒cd
-                        for ef in self.vd_enum_verbose():
+                        for ef in self.vd_enum_verbose(restrict_to_aspect):
                             rel_cd_ef = get_vdiff_relation(closure, cd, ef)
                             if rel_cd_ef == TRUE: # ab⊒cd & cd⊒ef ==> ab⊒ef
                                 origin = ['TransP', [ab, rel_ab_cd, cd, rel_cd_ef, ef]]
@@ -1462,7 +1598,7 @@ class EudoxaManager:
                             if colls: # A collision has occurred — abort
                                 return (closure, adds, colls)
                     elif rel_ab_cd == FALSE: # ab⋣cd
-                        for ef in self.vd_enum_verbose():
+                        for ef in self.vd_enum_verbose(restrict_to_aspect):
                             rel_cd_ef = get_vdiff_relation(closure, cd, ef)
                             if rel_cd_ef == TRUE: # ab⋣cd & cd⊒ef
                                 rel_ef_cd = get_vdiff_relation(closure, ef, cd)
@@ -1484,7 +1620,7 @@ class EudoxaManager:
                                     app_ac(origin, set_vdiff_relation(closure, dc, ba, FALSE), adds, colls)
                             if colls: # A collision has occurred — abort
                                 return (closure, adds, colls)
-        return (closure, adds, colls)
+        return (closure, _topological_sort_adds(adds), colls)
 
     def expand_vdiff_comparison_matrix(self, an2: str):
         """Add vdcm entries for all new vdiff pairs that involve aspect *an2*.
