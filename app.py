@@ -569,22 +569,51 @@ def get_level_graph(aspect_name):
         return {"error": "Could not compute level graph."}, 500
 
 
-# ── Aspect level relation formatting helpers ──────────────────────────────────
+def _fmt_vdiff(vd) -> str:
+    """Δ[aspect](la,lb), or the bare zero-diff symbol for a natural zero-diff.
 
-_AL_RULE_LABELS = {
-    'DiffP':      'Difference property',
-    'NegDiffP':   'Negative difference property',
-    'TransP':     'Transitivity property',
-    'InvP':       'Inverse difference property',
-    'TransP2':    'Transitivity property 2',
-    'NegTransP':  'Negative transitivity property',
-    'NegTransP2': 'Negative transitivity property 2',
-    'NegInvP':    'Negative inverse difference property',
+    Unlike VDiff.__repr__ (which omits the aspect name — by design, for the
+    common case of a single-aspect display where the aspect is already
+    obvious from context), this disambiguates same-named levels across
+    different aspects. Needed wherever a closure derivation or collision
+    message can mix VDiffs from more than one aspect: the full (cross-aspect)
+    closure, and VDiff-matrix comparisons, which always span two aspects.
+    Without it, e.g. Δ(A,"0","1") and Δ(B,"0","1") both render as "Δ(0,1)",
+    making two genuinely different facts look like the same one repeated. A
+    natural zero-diff is never ambiguous this way — there's exactly one,
+    regardless of aspect — so it's left as the bare '◬' symbol.
+    """
+    if vd.natural_zero():
+        return repr(vd)
+    return f"{eudoxa.DELTA}[{vd.aspect_name}]({vd.from_level},{vd.to_level})"
+
+
+# ── Closure rule labels (shared by AL-relation and VDiff-matrix formatting) ──
+
+# Keys must match the rule labels closure() actually emits (eudoxa.py) — see
+# the `origin = [...]` assignments there. This previously used bare 'InvP' /
+# 'TransP2' / 'NegTransP2' / 'NegInvP', none of which closure() ever produces
+# (the real labels always carry an _L/_R or _DEQ_L/_DEQ_R suffix), so those
+# four rule families silently fell through to the unlabelled "RuleName(...)"
+# fallback in _fmt_al_origin/_fmt_entry instead of a readable label.
+_CLOSURE_RULE_LABELS = {
+    'DiffP':            'Difference property',
+    'NegDiffP':         'Negative difference property',
+    'TransP':           'Transitivity property',
+    'InvP_R':           'Inverse difference property (right)',
+    'InvP_L':           'Inverse difference property (left)',
+    'NegTransP':        'Negative transitivity property',
+    'NegTransP_DEQ_L':  'Negative transitivity property (≜, left)',
+    'NegTransP_DEQ_R':  'Negative transitivity property (≜, right)',
+    'NegInvP_L':        'Negative inverse difference property (left)',
+    'NegInvP_R':        'Negative inverse difference property (right)',
 }
 
 
+# \u2500\u2500 Aspect level relation formatting helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
 def _fmt_al_tokens(items):
-    return " ".join(repr(x) if hasattr(x, 'aspect_name')
+    return " ".join(_fmt_vdiff(x) if hasattr(x, 'aspect_name')
                     else (str(x) if x else '\u2014') for x in items)
 
 
@@ -593,7 +622,7 @@ def _fmt_al_origin(origin_type, origin_detail):
         aspect, la, rel, lb = origin_detail
         rel_label = rel if rel else '\u2014'
         return f"Set '{la} {rel_label} {lb}' in {aspect}"
-    label = _AL_RULE_LABELS.get(origin_type)
+    label = _CLOSURE_RULE_LABELS.get(origin_type)
     if label:
         return f"{label}: {_fmt_al_tokens(origin_detail)}"
     return f"{origin_type}({_fmt_al_tokens(origin_detail)})"
@@ -609,8 +638,8 @@ def _fmt_al_coll(entry):
     vd1, existing_rel, vd2, attempted_rel = coll
     return (
         f"{_fmt_al_origin(origin_type, origin_detail)} \u2192 "
-        f"attempted {repr(vd1)} {attempted_rel} {repr(vd2)} "
-        f"conflicts with existing {repr(vd1)} {existing_rel} {repr(vd2)}"
+        f"attempted {_fmt_vdiff(vd1)} {attempted_rel} {_fmt_vdiff(vd2)} "
+        f"conflicts with existing {_fmt_vdiff(vd1)} {existing_rel} {_fmt_vdiff(vd2)}"
     )
 
 
@@ -646,47 +675,91 @@ def patch_relation(aspect_name, la, lb):
     }, 200
 
 
-@app.get("/api/aspects/<aspect_name>/relations/closure")
+def _read_al_changes(aspect_name, mgr):
+    """Parse {"changes": [{la, lb, relation}, ...]} from the request body into
+    (la, lb, relation) tuples, shared by the closure and partial-closure
+    endpoints. Raises ValueError with a message suitable for a 400 response."""
+    data = request.get_json(silent=True) or {}
+    changes = data.get("changes", [])
+    aspect = mgr.aspects.get(aspect_name)
+    result = []
+    for ch in changes:
+        rel = ch.get("relation", eudoxa.UNDEFINED)
+        if rel not in eudoxa.AL_RELATION_OPTIONS:
+            raise ValueError(f"Invalid relation: {rel!r}")
+        la, lb = ch.get("la"), ch.get("lb")
+        for lvl in (la, lb):
+            if lvl and aspect is not None and lvl not in aspect.levels:
+                raise ValueError(f"Level '{lvl}' not found in aspect '{aspect_name}'")
+        result.append((la, lb, rel))
+    return result
+
+
+@app.post("/api/aspects/<aspect_name>/relations/closure")
 def get_relations_closure(aspect_name):
-    """Return cells where the closure infers a relation not present in the committed matrix.
-    Response: { cells: [{la, lb, relation}, ...] }
+    """Return cells where the full (all-aspects) closure infers a relation not
+    already present in the committed matrix or in the caller's pending changes.
+    Body: { "changes": [{ "la", "lb", "relation" }, ...] } — the changes
+    currently pending in the UI for this aspect; the closure departs from
+    committed ∪ changes, not the committed matrix alone.
+    Response: { cells: [{la, lb, relation}, ...], adds: [...], inferred_adds: [...] }
+    adds/inferred_adds are the same human-readable derivation strings shown by
+    the Apply-time inference panel (_fmt_al_entry), so the preview can explain
+    *why* a relation is inferred, not just report the flat result.
     Response on collision: { colls: [...] }, 409
     """
     mgr = load_manager_or_400()
     if aspect_name not in mgr.aspects:
         return {"error": f"Aspect '{aspect_name}' not found"}, 404
 
-    closure_matrix, _, colls = mgr.closure()
+    try:
+        changes = _read_al_changes(aspect_name, mgr)
+    except ValueError as e:
+        return {"error": str(e)}, 400
+
+    cells, adds, inferred_adds, colls = mgr.try_stage_aspect_level_relations(
+        aspect_name, changes, restrict_to_aspect=False
+    )
     if colls:
-        return {"colls": [_fmt_coll(c) for c in colls]}, 409
+        return {"colls": [_fmt_al_coll(c) for c in colls]}, 409
 
-    aspect = mgr.aspects[aspect_name]
-    levels = list(aspect.levels.keys())
-    zero   = eudoxa.NATURAL_ZERO
-    T, F, U = eudoxa.TRUE, eudoxa.FALSE, eudoxa.UNDEFINED
+    return {
+        "cells": cells,
+        "adds": [_fmt_al_entry(e) for e in adds],
+        "inferred_adds": [_fmt_al_entry(e) for e in inferred_adds],
+    }, 200
 
-    cells = []
-    for la in levels:
-        for lb in levels:
-            if la == lb:
-                continue
-            # Skip if the committed relation is already set
-            committed = mgr.get_aspect_level_relation(aspect_name, la, lb)
-            if committed != eudoxa.UNDEFINED:
-                continue
-            # Derive the AL relation from the closure matrix
-            vd_ab    = eudoxa.VDiff(aspect_name, la, lb)
-            ab_z     = eudoxa.get_vdiff_relation(closure_matrix, vd_ab,  zero)
-            z_ab     = eudoxa.get_vdiff_relation(closure_matrix, zero,   vd_ab)
-            if   ab_z == T and z_ab == F: clos_rel = eudoxa.BT
-            elif ab_z == T and z_ab == U: clos_rel = eudoxa.BTE
-            elif ab_z == T and z_ab == T: clos_rel = eudoxa.EQ
-            elif ab_z == U and z_ab == T: clos_rel = eudoxa.WTE
-            elif ab_z == F and z_ab == T: clos_rel = eudoxa.WT
-            else: continue  # no inference for this pair
-            cells.append({"la": la, "lb": lb, "relation": clos_rel})
 
-    return {"cells": cells}, 200
+@app.post("/api/aspects/<aspect_name>/relations/partial-closure")
+def get_relations_partial_closure(aspect_name):
+    """Return cells where a closure restricted to this aspect infers a relation
+    not already present in the committed matrix or in the caller's pending
+    changes. Cheaper than the full closure (skips cross-aspect propagation) and
+    therefore incomplete — it may miss inferences that require pivoting through
+    another aspect's VDiff — but a collision it reports is always genuine, since
+    restriction only removes inference paths.
+    Body / response shape identical to POST .../relations/closure.
+    """
+    mgr = load_manager_or_400()
+    if aspect_name not in mgr.aspects:
+        return {"error": f"Aspect '{aspect_name}' not found"}, 404
+
+    try:
+        changes = _read_al_changes(aspect_name, mgr)
+    except ValueError as e:
+        return {"error": str(e)}, 400
+
+    cells, adds, inferred_adds, colls = mgr.try_stage_aspect_level_relations(
+        aspect_name, changes, restrict_to_aspect=True
+    )
+    if colls:
+        return {"colls": [_fmt_al_coll(c) for c in colls]}, 409
+
+    return {
+        "cells": cells,
+        "adds": [_fmt_al_entry(e) for e in adds],
+        "inferred_adds": [_fmt_al_entry(e) for e in inferred_adds],
+    }, 200
 
 
 @app.post("/api/aspects/<aspect_name>/relations/batch")
@@ -1067,7 +1140,7 @@ def _make_vd(asp, la, lb):
 
 
 def _fmt_tokens(items):
-    return " ".join(repr(x) if hasattr(x, 'aspect_name')
+    return " ".join(_fmt_vdiff(x) if hasattr(x, 'aspect_name')
                      else (str(x) if x else "\u2014") for x in items)
 
 
@@ -1076,17 +1149,19 @@ def _fmt_entry(entry):
     if origin_type == 'SETVDREL':
         vd1_r, rel, vd2_r = origin_detail
         rel_label = rel if rel else "\u2014"
-        origin_str = f"Set {vd1_r} {rel_label} {vd2_r}"
+        origin_str = f"Set {_fmt_vdiff(vd1_r)} {rel_label} {_fmt_vdiff(vd2_r)}"
     else:
-        origin_str = f"{origin_type}({_fmt_tokens(origin_detail)})"
+        label = _CLOSURE_RULE_LABELS.get(origin_type)
+        origin_str = f"{label}: {_fmt_tokens(origin_detail)}" if label \
+            else f"{origin_type}({_fmt_tokens(origin_detail)})"
     return f"{origin_str} \u2192 {_fmt_tokens(result_items)}"
 
 
 def _fmt_coll(entry):
     _, _, coll = entry  # entry is [origin_type, origin_detail, coll]
     vd1_c, old_rel, vd2_c, new_rel_c = coll
-    return (f"{repr(vd1_c)} {new_rel_c or '\u2014'} {repr(vd2_c)} "
-            f"conflicts with existing {repr(vd1_c)} {old_rel} {repr(vd2_c)}")
+    return (f"{_fmt_vdiff(vd1_c)} {new_rel_c or '\u2014'} {_fmt_vdiff(vd2_c)} "
+            f"conflicts with existing {_fmt_vdiff(vd1_c)} {old_rel} {_fmt_vdiff(vd2_c)}")
 
 
 @app.patch("/api/vdiff-matrix/<an1>/<l1a>/<l1b>/<an2>/<l2a>/<l2b>")
