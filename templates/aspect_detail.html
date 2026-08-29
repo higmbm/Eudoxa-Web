@@ -35,7 +35,11 @@
   <p id="typeError" class="feedback-error" hidden></p>
 
   <!-- ── Levels ──────────────────────────────────────────────── -->
-  <h2>Levels</h2>
+  <div class="section-header">
+    <h2>Levels</h2>
+    <button id="btnSortAsc">{{ 'Sort A→Z' if dtype_raw == 'str' else 'Sort ascending' }}</button>
+    <button id="btnSortDesc">{{ 'Sort Z→A' if dtype_raw == 'str' else 'Sort descending' }}</button>
+  </div>
   <table class="data-table levels-table">
     <thead>
       <tr>
@@ -167,6 +171,7 @@
 
       if (res.ok) {
         previousType = newType;
+        updateSortButtonLabels();
         typeFeedback.textContent = "Type updated.";
         typeFeedback.className = "feedback-ok";
         setTimeout(() => { typeFeedback.textContent = ""; typeFeedback.className = ""; }, 3000);
@@ -393,6 +398,28 @@
         location.reload();
       }
     }
+
+    // ── Sort levels (ascending / descending) ──────────────────────
+    function updateSortButtonLabels() {
+      const isNumeric = typeSelect.value === "int" || typeSelect.value === "float";
+      document.getElementById("btnSortAsc").textContent  = isNumeric ? "Sort ascending"  : "Sort A→Z";
+      document.getElementById("btnSortDesc").textContent = isNumeric ? "Sort descending" : "Sort Z→A";
+    }
+
+    function sortLevels(descending) {
+      const isNumeric = typeSelect.value === "int" || typeSelect.value === "float";
+      const rows = Array.from(levelsBody.querySelectorAll("tr[data-level]"));
+      rows.sort((a, b) => {
+        const la = a.dataset.level, lb = b.dataset.level;
+        return isNumeric ? (parseFloat(la) - parseFloat(lb)) : la.localeCompare(lb);
+      });
+      if (descending) rows.reverse();
+      rows.forEach(tr => levelsBody.appendChild(tr));
+      persistLevelOrder();
+    }
+
+    document.getElementById("btnSortAsc").addEventListener("click", () => sortLevels(false));
+    document.getElementById("btnSortDesc").addEventListener("click", () => sortLevels(true));
 
     // ── Add delete button to newly added rows ────────────────────
     // (rows already in the DOM at page-load get their buttons from the template;
