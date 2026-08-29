@@ -94,6 +94,22 @@ class Aspect:
             raise ValueError(f"Level '{level}' does not exist in aspect '{self.name}'.")
         self.levels[level] = description
 
+    def reorder_levels(self, new_order: list) -> None:
+        """Reorder self.levels to match new_order.
+        new_order must contain exactly the same levels as self.levels.
+        Raises ValueError if they don't match.
+        """
+        existing = set(self.levels.keys())
+        requested = list(new_order)
+        if set(requested) != existing:
+            missing  = existing - set(requested)
+            extra    = set(requested) - existing
+            msgs = []
+            if missing:  msgs.append(f"missing from new order: {sorted(missing)}")
+            if extra:    msgs.append(f"unknown levels: {sorted(extra)}")
+            raise ValueError("; ".join(msgs))
+        self.levels = {level: self.levels[level] for level in requested}
+
     def __repr__(self):
         return (f"Aspect(name='{self.name}', data_type='{self.data_type.__name__}', "
                 f"description='{self.description}', levels={list(self.levels.keys())})")
@@ -905,6 +921,12 @@ class EudoxaManager:
         if aspect_name not in self.aspects:
             raise ValueError(f"Aspect '{aspect_name}' does not exist.")
         self.aspects[aspect_name].set_level_description(level_name, description)
+
+    def reorder_aspect_levels(self, aspect_name: str, new_order: list) -> None:
+        logger.debug(f"Reordering levels of aspect '{aspect_name}'.")
+        if aspect_name not in self.aspects:
+            raise ValueError(f"Aspect '{aspect_name}' does not exist.")
+        self.aspects[aspect_name].reorder_levels(new_order)
 
     def add_aspect_level(self, aspect_name: str, level, description: str):
         logger.debug(f"Adding level '{level}' to aspect '{aspect_name}'.")
