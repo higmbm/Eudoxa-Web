@@ -342,6 +342,22 @@ def patch_aspect(aspect_name):
     save_manager(mgr)
     return {"message": "Aspect updated"}, 200
 
+@app.post("/api/aspects/reorder")
+def reorder_aspects():
+    mgr = load_manager_or_400()
+    data = request.get_json(silent=True) or {}
+    order = data.get("order")
+    if not isinstance(order, list):
+        return {"error": "Missing 'order' list"}, 400
+
+    try:
+        mgr.reorder_aspects(order)
+    except ValueError as e:
+        return {"error": str(e)}, 400
+
+    save_manager(mgr)
+    return {"message": "Aspects reordered"}, 200
+
 @app.get("/api/aspect-names")
 def get_aspect_names():
     mgr = load_manager_or_400()

@@ -48,6 +48,24 @@
   width: 1%;
 }
 
+/* ── Drag-to-reorder handle column ───────────────────────────── */
+.drag-handle {
+  width: 1%;
+  text-align: center;
+  cursor: grab;
+  color: #999;
+  user-select: none;
+}
+
+.drag-handle:focus {
+  outline: 2px solid #0b5cff;
+  outline-offset: -1px;
+}
+
+.aspects-table tbody tr.dragging {
+  opacity: 0.5;
+}
+
 /* ── Button colours (mirrors index.css) ────────────────────── */
 button.primary {
   background: #0b5cff;
