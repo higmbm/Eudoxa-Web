@@ -202,11 +202,12 @@ The vdcm is stored as a two-level JSON object mirroring the adjacency dict:
 |---|---|---|
 | `GET` | `/api/aspects` | List aspects (table rows) |
 | `POST` | `/api/aspects` | Add aspect |
-| `PATCH` | `/api/aspects` | Reorder aspects |
+| `POST` | `/api/aspects/reorder` | Reorder aspects; body `{"order": [...]}` — full permutation of existing aspect names, validated against `EudoxaManager.reorder_aspects` |
 | `PATCH` | `/api/aspects/<name>` | Update description or data type; `data_type` must be `"str"`, `"int"`, or `"float"`; rejected with 400 listing failing level names if any existing level cannot be parsed into the new type |
 | `GET` | `/api/aspect-names` | List aspect names only |
 | `GET` | `/api/aspects/<name>/levels` | List levels |
 | `POST` | `/api/aspects/<name>/levels` | Add level; raises 400 if level already exists |
+| `POST` | `/api/aspects/<name>/levels/reorder` | Reorder levels within an aspect; body `{"order": [...]}` — full permutation of existing level names, validated against `Aspect.reorder_levels` (via `EudoxaManager.reorder_aspect_levels`) |
 | `PATCH` | `/api/aspects/<name>/levels/<level>` | Update level description |
 | `GET` | `/api/aspects/<name>/levels/<level>/delete-preview` | Return deletion impact (VDiffs, AL relations, VDCM entries, consequences) without committing |
 | `DELETE` | `/api/aspects/<name>/levels/<level>` | Delete aspect level and all associated data |
@@ -366,6 +367,20 @@ Follows the same staging-then-confirm pattern as delete aspect level.
 `EudoxaManager.confirm_remove_aspect` removes the aspect's VDCM rows/columns (excluding `NATURAL_ZERO`), deletes the aspect from `mgr.aspects`, then applies the chosen consequence mode.
 
 The `.delete-staging` CSS block was moved from `aspect_detail.css` to `common.css` so it is available on both `/aspects` and `/aspects/<name>`.
+
+### Reordering aspects and aspect levels
+
+**Order is just dict insertion order.** `mgr.aspects` (`Dict[str, Aspect]`) and `Aspect.levels` (`Dict[str, str]`) carry no separate `order`/`index` field — every consumer (navbar, `/aspects`, `/consequences` table + consequence space + dominance graph, `/vdiff-matrix` dropdown and columns, the relations matrix, `_sorted_vdiffs`, Excel export) iterates these dicts directly and relies on Python's dict insertion-order guarantee. This means **reordering the dict is the entire feature** — no downstream view needed any code change to pick up a new order; only the reorder-and-persist primitive plus a UI to trigger it were added:
+
+- `EudoxaManager.reorder_aspects(new_order)` / `Aspect.reorder_levels(new_order)` — validate `new_order` is exactly a permutation of the existing keys (raise `ValueError` listing missing/unknown names otherwise), then rebuild the dict via `{k: self.X[k] for k in new_order}`. `EudoxaManager.reorder_aspect_levels(aspect_name, new_order)` is a thin lookup-then-delegate wrapper, matching the `add_aspect_level` convention.
+- `POST /api/aspects/reorder` and `POST /api/aspects/<name>/levels/reorder` — both take `{"order": [...]}`, call the above, `save_manager`, done.
+- `_sorted_vdiffs(asp)` already re-derives vdiff display order from **current** `asp.levels.keys()` on every call (not from `asp.vdiffs`' own append order — see "VDiff ordering in export and UI" above), so it needed no changes at all for level reordering to propagate to `/vdiff-matrix` and the VDCM export tab.
+
+**Drag-and-drop UI** (`/aspects` for aspects, `/aspects/<name>` Levels table for levels): each row gets a `⠿` handle cell. **`draggable` and the native `dragstart`/`dragend` listeners live on the handle `<td>` only, not the `<tr>`** — an earlier version made the whole row draggable, which silently broke text selection and link-clicks anywhere else in the row (a click-drag gesture on a `draggable` element is intercepted as HTML5 DnD instead of a normal selection/click). `dragover` (which only needs to detect drop position, not itself be a drag source) stays on the `<tr>`. The handle is also `tabindex="0"` with `ArrowUp`/`ArrowDown` keydown handlers, so keyboard/touch users get the same reordering without drag gestures. Both paths call a shared `persistAspectOrder()`/`persistLevelOrder()` that reads the current DOM row order and POSTs it; on failure the page reloads to resync. No confirmation/toggle-to-enable step was added — reordering is always live, since an accidental reorder is costless to undo (drag back or reload).
+
+**Sort buttons** (`/aspects/<name>`, next to the "Levels" `<h2>`, mirroring the Maximize/Minimize section-header pattern): "Sort A→Z"/"Sort Z→A" for categorical aspects, "Sort ascending"/"Sort descending" for numerical — labels re-evaluate live off `typeSelect.value` if the type is changed without a reload. These are pure client-side conveniences with **no dedicated backend logic**: they compute the target order in JS (`localeCompare` for `str`, `parseFloat` for `int`/`float`), reorder the DOM rows, and call the same `persistLevelOrder()` used by drag-and-drop.
+
+**Gotcha found while building this:** Flask's `DefaultJSONProvider.sort_keys` defaults to `True`, which alphabetises dict keys **recursively** in every `jsonify()` response — including nested dicts, not just the top-level one. This bit the "Create project from consequences" staging preview: `staged.aspects` (a JSON *array*) preserved file-column order correctly, but each consequence's `aspect_levels` (a nested *dict*) came back with its keys alphabetized, so the preview's `⟨...⟩` tuples displayed in alphabetical order regardless of the source file's column order. Fixed client-side by building each tuple from `staged.aspects` (order-preserving) rather than `Object.values(cons.aspect_levels)` (order-scrambled by the server's JSON serialization) — see `showConsStagingPreview` in `index.html`. Worth remembering for any future endpoint that returns a nested dict keyed by aspect/level name: list order survives `jsonify`, dict key order does not.
 
 ### Aspect detail view (`/aspects/<name>`)
 
@@ -573,8 +588,6 @@ Both phases can be limited to one aspect's own VDiffs (plus the shared `NATURAL_
 
 ## Known issues
 
-- **Aspect reordering via drag-and-drop** in `/` was attempted but deferred.
-
 - `pos`, `zero`, and `non_pos` had a natural-zero bug (returning incorrect results for ◬) that was present in `non_neg` and `neg` too; all five were corrected in the vdcm refactor (branch `refactor/vdcm`).
 
 - **Response time** for Apply changes in `/vdiff-matrix` and `/aspects/<name>` is dominated by the closure computation. Worst-case complexity is O(n⁴) but typical cost is O(d·n³) with d ≈ 2–4. An incremental closure algorithm (O(n²) per relation change) remains a longer-term option.
@@ -599,11 +612,11 @@ Both phases can be limited to one aspect's own VDiffs (plus the shared `NATURAL_
 
 - ~~Show vdiff matrix closure~~ Resolved: see "Vdiff relation matrix closure" above.
 
-- Change (re-sort) aspect order 
+- ~~Change (re-sort) aspect order~~ Resolved: drag-and-drop (handle-only draggable) + arrow-key reordering on `/aspects`, persisted via `POST /api/aspects/reorder`. See "Reordering aspects and aspect levels" above.
 
-- Manually change (re-sort) aspect level order
+- ~~Manually change (re-sort) aspect level order~~ Resolved: same drag-and-drop/arrow-key pattern applied to the Levels table on `/aspects/<name>`, persisted via `POST /api/aspects/<name>/levels/reorder`. See "Reordering aspects and aspect levels" above.
 
-- Automatically change (re-sort) aspect level order according to some criterion
+- ~~Automatically change (re-sort) aspect level order according to some criterion~~ Resolved: "Sort A→Z"/"Sort Z→A" (categorical) and "Sort ascending"/"Sort descending" (numeric) buttons next to the Levels heading — pure client-side sort computation reusing the same reorder endpoint, no new backend logic. See "Reordering aspects and aspect levels" above.
 
 - ~~Add 'Maximize' and 'Minimize' buttons to numerical aspects~~ Resolved (Option A): **Maximize** and **Minimize** buttons appear in the section header of `/aspects/<name>` when the aspect is numerical. Clicking a button fetches all implied `≻` pairs from `GET /api/aspects/<name>/relations/order?direction=…` and stages them as teal-bordered pending changes, integrated with the existing Apply/Discard workflow. Buttons toggle: clicking again unstages. Consider Option B (persistent property, auto-applied on new levels) as a future enhancement.
 
