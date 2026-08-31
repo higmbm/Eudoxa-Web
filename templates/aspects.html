@@ -16,6 +16,7 @@
   <table class="data-table aspects-table">
     <thead>
       <tr>
+        <th></th>
         <th>Name</th>
         <th>Data type</th>
         <th>Description</th>
@@ -26,7 +27,8 @@
     </thead>
     <tbody>
     {% for row in rows %}
-      <tr>
+      <tr data-aspect="{{ row.name }}">
+        <td class="drag-handle" draggable="true" tabindex="0" title="Drag to reorder, or focus and use ↑/↓" aria-label="Reorder {{ row.name }}">⠿</td>
         <td><a href="/aspects/{{ row.name }}">{{ row.name }}</a></td>
         <td>{{ row.dtype }}</td>
         <td class="editable-desc" data-aspect="{{ row.name }}" title="Click to edit description">{{ row.description }}</td>
@@ -40,6 +42,7 @@
     </tbody>
     <tfoot class="add-aspect-foot">
       <tr class="add-aspect-inputs">
+        <td></td>
         <td><input id="inputAspectName" type="text" placeholder="e.g. Economy"></td>
         <td>
           <select id="inputAspectType">
@@ -53,7 +56,7 @@
         <td class="add-aspect-computed-cols"></td>
       </tr>
       <tr class="add-aspect-action">
-        <td colspan="6">
+        <td colspan="7">
           <div class="add-aspect-action-row">
             <span class="action-spacer"></span>
             <button id="btnAddAspect" class="primary">Add aspect</button>
@@ -329,6 +332,64 @@
         errEl.hidden = false;
       }
     });
+  </script>
+
+  <script>
+    // ── Reorder aspects (drag-and-drop + arrow keys) ─────────────
+    const reorderBody = document.querySelector(".aspects-table tbody");
+    let dragRow = null;
+
+    function attachRowDrop(tr) {
+      tr.addEventListener("dragover", e => {
+        e.preventDefault();
+        if (!dragRow || dragRow === tr) return;
+        const rect   = tr.getBoundingClientRect();
+        const before = (e.clientY - rect.top) < rect.height / 2;
+        tr.parentNode.insertBefore(dragRow, before ? tr : tr.nextSibling);
+      });
+    }
+
+    reorderBody.querySelectorAll("tr").forEach(attachRowDrop);
+
+    reorderBody.querySelectorAll(".drag-handle").forEach(handle => {
+      const tr = handle.closest("tr");
+      handle.addEventListener("dragstart", () => {
+        dragRow = tr;
+        tr.classList.add("dragging");
+      });
+      handle.addEventListener("dragend", () => {
+        tr.classList.remove("dragging");
+        dragRow = null;
+        persistAspectOrder();
+      });
+      handle.addEventListener("keydown", e => {
+        if (e.key === "ArrowUp" && tr.previousElementSibling) {
+          e.preventDefault();
+          tr.parentNode.insertBefore(tr, tr.previousElementSibling);
+          handle.focus();
+          persistAspectOrder();
+        } else if (e.key === "ArrowDown" && tr.nextElementSibling) {
+          e.preventDefault();
+          tr.parentNode.insertBefore(tr.nextElementSibling, tr);
+          handle.focus();
+          persistAspectOrder();
+        }
+      });
+    });
+
+    async function persistAspectOrder() {
+      const order = Array.from(reorderBody.querySelectorAll("tr")).map(tr => tr.dataset.aspect);
+      const res = await fetch("/api/aspects/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order })
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        alert(j.error || `${res.status} ${res.statusText}`);
+        location.reload();
+      }
+    }
   </script>
 
 </body>

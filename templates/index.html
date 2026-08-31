@@ -527,7 +527,7 @@
       html += `<details class="import-detail">`
            +  `<summary><strong>Consequences (${nCons})</strong></summary><ul>`;
       for (const cons of staged.consequences) {
-        const vals = Object.values(cons.aspect_levels).map(escapeHtml).join(", ");
+        const vals = staged.aspects.map(a => cons.aspect_levels[a.name]).map(escapeHtml).join(", ");
         html += `<li><strong>${escapeHtml(cons.short_name)}</strong>: ⟨${vals}⟩</li>`;
       }
       html += `</ul></details>`;

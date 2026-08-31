@@ -35,10 +35,15 @@
   <p id="typeError" class="feedback-error" hidden></p>
 
   <!-- ── Levels ──────────────────────────────────────────────── -->
-  <h2>Levels</h2>
+  <div class="section-header">
+    <h2>Levels</h2>
+    <button id="btnSortAsc">{{ 'Sort A→Z' if dtype_raw == 'str' else 'Sort ascending' }}</button>
+    <button id="btnSortDesc">{{ 'Sort Z→A' if dtype_raw == 'str' else 'Sort descending' }}</button>
+  </div>
   <table class="data-table levels-table">
     <thead>
       <tr>
+        <th></th>
         <th>Level</th>
         <th>Description</th>
         <th></th>
@@ -47,7 +52,8 @@
     <tbody id="levelsBody">
       {% if level_rows %}
         {% for row in level_rows %}
-        <tr>
+        <tr data-level="{{ row.level }}">
+          <td class="drag-handle" draggable="true" tabindex="0" title="Drag to reorder, or focus and use ↑/↓" aria-label="Reorder {{ row.level }}">⠿</td>
           <td>{{ row.level }}</td>
           <td class="editable-desc"
               data-level="{{ row.level }}"
@@ -58,17 +64,18 @@
         </tr>
         {% endfor %}
       {% else %}
-        <tr><td colspan="3" class="muted">No levels defined yet.</td></tr>
+        <tr><td colspan="4" class="muted">No levels defined yet.</td></tr>
       {% endif %}
     </tbody>
     <tfoot class="add-level-foot">
       <tr class="add-level-inputs">
+        <td></td>
         <td><input id="inputLevel" type="text" placeholder="e.g. High"></td>
         <td><input id="inputLevelDesc" type="text" placeholder="Optional"></td>
         <td></td>
       </tr>
       <tr class="add-level-action">
-        <td colspan="3">
+        <td colspan="4">
           <div class="add-level-action-row">
             <span class="action-spacer"></span>
             <button id="btnAddLevel" class="primary">Add level</button>
@@ -164,6 +171,7 @@
 
       if (res.ok) {
         previousType = newType;
+        updateSortButtonLabels();
         typeFeedback.textContent = "Type updated.";
         typeFeedback.className = "feedback-ok";
         setTimeout(() => { typeFeedback.textContent = ""; typeFeedback.className = ""; }, 3000);
@@ -280,6 +288,16 @@
         if (placeholder) placeholder.closest("tr").remove();
 
         const tr = document.createElement("tr");
+        tr.dataset.level = level;
+
+        const handleTd = document.createElement("td");
+        handleTd.className = "drag-handle";
+        handleTd.draggable = true;
+        handleTd.tabIndex = 0;
+        handleTd.title = "Drag to reorder, or focus and use ↑/↓";
+        handleTd.setAttribute("aria-label", `Reorder ${level}`);
+        handleTd.textContent = "⠿";
+        tr.appendChild(handleTd);
 
         const levelTd = document.createElement("td");
         levelTd.textContent = level;
@@ -304,6 +322,7 @@
 
         tbody.appendChild(tr);
         attachDescEdit(descTd, levelUrl);
+        attachLevelRowDrag(tr);
         clearLevelForm();
         feedbackEl.textContent = `Level '${level}' added.`;
         feedbackEl.className = "feedback-ok";
@@ -319,6 +338,88 @@
         feedbackEl.hidden = false;
       }
     });
+
+    // ── Reorder levels (drag-and-drop + arrow keys) ───────────────
+    const levelsBody = document.getElementById("levelsBody");
+    let dragLevelRow = null;
+
+    function attachLevelRowDrop(tr) {
+      tr.addEventListener("dragover", e => {
+        e.preventDefault();
+        if (!dragLevelRow || dragLevelRow === tr) return;
+        const rect   = tr.getBoundingClientRect();
+        const before = (e.clientY - rect.top) < rect.height / 2;
+        tr.parentNode.insertBefore(dragLevelRow, before ? tr : tr.nextSibling);
+      });
+    }
+
+    function attachLevelRowDrag(tr) {
+      attachLevelRowDrop(tr);
+      const handle = tr.querySelector(".drag-handle");
+      handle.addEventListener("dragstart", () => {
+        dragLevelRow = tr;
+        tr.classList.add("dragging");
+      });
+      handle.addEventListener("dragend", () => {
+        tr.classList.remove("dragging");
+        dragLevelRow = null;
+        persistLevelOrder();
+      });
+      handle.addEventListener("keydown", e => {
+        if (e.key === "ArrowUp" && tr.previousElementSibling) {
+          e.preventDefault();
+          tr.parentNode.insertBefore(tr, tr.previousElementSibling);
+          handle.focus();
+          persistLevelOrder();
+        } else if (e.key === "ArrowDown" && tr.nextElementSibling) {
+          e.preventDefault();
+          tr.parentNode.insertBefore(tr.nextElementSibling, tr);
+          handle.focus();
+          persistLevelOrder();
+        }
+      });
+    }
+
+    levelsBody.querySelectorAll("tr[data-level]").forEach(attachLevelRowDrag);
+
+    async function persistLevelOrder() {
+      const order = Array.from(levelsBody.querySelectorAll("tr[data-level]")).map(tr => tr.dataset.level);
+      const res = await fetch(`/api/aspects/${encodeURIComponent(ASPECT_NAME)}/levels/reorder`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order })
+      });
+      if (res.ok) {
+        loadRelations();
+        loadLevelGraph();
+      } else {
+        const j = await res.json().catch(() => ({}));
+        alert(j.error || `${res.status} ${res.statusText}`);
+        location.reload();
+      }
+    }
+
+    // ── Sort levels (ascending / descending) ──────────────────────
+    function updateSortButtonLabels() {
+      const isNumeric = typeSelect.value === "int" || typeSelect.value === "float";
+      document.getElementById("btnSortAsc").textContent  = isNumeric ? "Sort ascending"  : "Sort A→Z";
+      document.getElementById("btnSortDesc").textContent = isNumeric ? "Sort descending" : "Sort Z→A";
+    }
+
+    function sortLevels(descending) {
+      const isNumeric = typeSelect.value === "int" || typeSelect.value === "float";
+      const rows = Array.from(levelsBody.querySelectorAll("tr[data-level]"));
+      rows.sort((a, b) => {
+        const la = a.dataset.level, lb = b.dataset.level;
+        return isNumeric ? (parseFloat(la) - parseFloat(lb)) : la.localeCompare(lb);
+      });
+      if (descending) rows.reverse();
+      rows.forEach(tr => levelsBody.appendChild(tr));
+      persistLevelOrder();
+    }
+
+    document.getElementById("btnSortAsc").addEventListener("click", () => sortLevels(false));
+    document.getElementById("btnSortDesc").addEventListener("click", () => sortLevels(true));
 
     // ── Add delete button to newly added rows ────────────────────
     // (rows already in the DOM at page-load get their buttons from the template;

@@ -342,6 +342,22 @@ def patch_aspect(aspect_name):
     save_manager(mgr)
     return {"message": "Aspect updated"}, 200
 
+@app.post("/api/aspects/reorder")
+def reorder_aspects():
+    mgr = load_manager_or_400()
+    data = request.get_json(silent=True) or {}
+    order = data.get("order")
+    if not isinstance(order, list):
+        return {"error": "Missing 'order' list"}, 400
+
+    try:
+        mgr.reorder_aspects(order)
+    except ValueError as e:
+        return {"error": str(e)}, 400
+
+    save_manager(mgr)
+    return {"message": "Aspects reordered"}, 200
+
 @app.get("/api/aspect-names")
 def get_aspect_names():
     mgr = load_manager_or_400()
@@ -499,6 +515,25 @@ def add_level(aspect_name):
 
     save_manager(mgr)
     return {"message": "Level added"}, 201
+
+@app.post("/api/aspects/<aspect_name>/levels/reorder")
+def reorder_levels(aspect_name):
+    mgr = load_manager_or_400()
+    if aspect_name not in mgr.aspects:
+        return {"error": f"Aspect '{aspect_name}' not found"}, 404
+
+    data = request.get_json(silent=True) or {}
+    order = data.get("order")
+    if not isinstance(order, list):
+        return {"error": "Missing 'order' list"}, 400
+
+    try:
+        mgr.reorder_aspect_levels(aspect_name, order)
+    except ValueError as e:
+        return {"error": str(e)}, 400
+
+    save_manager(mgr)
+    return {"message": "Levels reordered"}, 200
 
 @app.get("/api/aspects/<aspect_name>/relations")
 def get_relations(aspect_name):
