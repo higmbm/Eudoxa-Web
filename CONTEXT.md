@@ -51,6 +51,9 @@ flask-pythonanywhere-test/
 | `CONS` | `"\|CONS\|"` | Excel tab: consequences |
 | `VDCM` | `"\|VDCM\|"` | Excel tab: VDiff comparison matrix |
 | `DELTA` | `"Δ"` | VDiff display prefix |
+| `ASP_U` | `"\|ASP_U\| "` | Cardinal utility tab prefix: one per aspect |
+| `CONS_U` | `"\|CONS_U\|"` | Cardinal utility tab: consequences with utility values |
+| `VDIFF_U` | `"\|VDIFF_U\|"` | Cardinal utility tab: utility value differences + chart |
 | `ZDIFF_TUPLE` | `(None, None)` | Legacy tuple key (still used in Excel import label parsing) |
 | `ZDIFF_DISPLAY` | `"◬"` (U+25EC) | Display/persistence symbol for natural zero-diffs |
 | `NATURAL_ZERO` | `VDiff(None, None, None)` | Single canonical vdcm dict key for all natural zero-diffs |
@@ -162,6 +165,61 @@ The vdcm is stored as a two-level JSON object mirroring the adjacency dict:
 
 **Schema 1 (legacy):** Outer key `"A1|||A2"` (aspect pair), inner key `"f1::t1>>f2::t2"` (two vdiff tuples, `None` as `""`). `from_dict` detects schema 1 and migrates automatically by normalising natural zeros to `NATURAL_ZERO`. Files produced on the `main` branch before this refactor are schema 1.
 
+### Cardinal utility export workbook
+
+`EudoxaManager.export_cardinal_utility_to_workbook()` builds a utility-elicitation workbook and returns a **`BytesIO`** (not a `Workbook` object) because chart XML must be post-processed after openpyxl serialises the file (see below). The route `GET /api/export-cardinal-utility` reads the buffer directly and sends it as a download.
+
+Tabs in order: `|ASP_U| <name>` (one per aspect), `|CONS_U|`, `|VDIFF_U|`.
+
+**`|ASP_U| <name>` tab** (one per aspect):
+
+```
+A1: aspect name    B1: data type   C1: "c ="   D1: yellow input (calibration coeff.)
+A2: description                    C2: "U"
+Row 3+: A = parsed level value,    C = yellow input (utility value, user fills in)
+         E+ = utility difference table
+```
+
+Columns E onward hold a difference table:
+- Row 2: `=A{3+k}` column headers (level values)
+- Rows 3+: `=C{3+i}-C{3+k}` differences (thin borders on all cells, no border on row-2 headers)
+
+Below the data a chart is anchored at `A{n_levels+4}`:
+- **int/float aspects** → ScatterChart (`scatterStyle="marker"`, circle markers, no connecting line). X-axis aligned to level values via GCD of spacings as `majorUnit`; `scaling.min` set to the smallest level value.
+- **other aspects** → BarChart column chart with level values as inline string categories (`strLit`).
+
+**`|CONS_U|` tab** (n = number of aspects):
+
+| Cols | Content |
+|---|---|
+| A | Consequence name |
+| 2 .. n+1 | Aspect level values (INDEX/MATCH formula from aspect tab) |
+| n+3 .. 2n+2 | U value per aspect; row 1 = `={sref}!$D$1` (calibration coeff.); rows 3+ = `=INDEX({sref}!$C:$C,MATCH({asp_col}{row},{sref}!$A:$A,0))` |
+| 2n+4 | Weighted-sum total utility: `=E{r}*E$1+F{r}*F$1+…` |
+| 2n+5 | (empty separator) |
+| 2n+6 | Compact label: `=A{r}&":⟨"&B{r}&","&C{r}&…&"⟩"` |
+
+A horizontal bar chart is anchored at `A{n_cons+4}`, with consequence labels (built inline via `strLit` from Python-computed strings) and total utility as values.
+
+Sheet references use `sheet_ref(name)` (single-quotes the name when it contains non-word characters, covering the `|ASP_U|` prefix).
+
+**`|VDIFF_U|` tab**:
+
+Starting at row 4, for each aspect: a header row (aspect name in col B and C), then one row per ordered pair (i,j) with i≠j:
+- Col C: label `(from,to)` (Python-computed level string values)
+- Col D: `={sref}!{diff_col}{diff_row}` referencing the difference table cell in the aspect tab
+
+A single vertical column chart (anchored at `F4`) covers all aspects, using inline `strLit` labels for both the diff pair names and the aspect-name group rows.
+
+**Chart XML post-processing** (`zipfile` + regex inside `export_cardinal_utility_to_workbook`):
+
+openpyxl defaults both chart axes to `axPos="l"` regardless of chart orientation, causing category labels to be invisible in Excel. Every chart XML file in the workbook that contains a `<barChart>` is patched:
+
+- `barDir val="col"` (vertical) → catAx gets `axPos="b"`, valAx gets `axPos="l"`
+- `barDir val="bar"` (horizontal) → catAx gets `axPos="l"`, valAx gets `axPos="b"`
+
+Both cases also add the elements Excel expects but openpyxl omits: `<delete val="0"/>`, `<numFmt>`, `<auto val="1"/>`, `<lblAlgn val="ctr"/>`, `<noMultiLvlLbl val="0"/>` on catAx and `<crosses val="autoZero"/>`, `<crossBetween val="between"/>` on valAx. The catAx `tickLblPos` is set to `"low"` so labels appear below all bars even when the axis crosses at zero (mixed positive/negative values). Scatter charts (`scatterChart`) are not patched — openpyxl handles their axes correctly when `x_axis.axPos` and `y_axis.axPos` are set explicitly in Python.
+
 ---
 
 ## Flask app (`app.py`)
@@ -195,6 +253,7 @@ The vdcm is stored as a two-level JSON object mirroring the adjacency dict:
 | `GET` | `/api/export-aspects` | Download a multi-tab workbook with one `\|ASP\ <name>\|` tab per aspect (levels + relations matrix); filename `{project_name}_aspects.xlsx` |
 | `GET` | `/api/export-consequences` | Download a single-tab `\|CONS\|` workbook for the current project; filename `{project_name}_consequences.xlsx` |
 | `GET` | `/api/export-project` | Download Excel workbook |
+| `GET` | `/api/export-cardinal-utility` | Download cardinal-utility workbook; filename `{project_name}_cardinal.xlsx` |
 
 #### API — Aspects
 
@@ -454,7 +513,7 @@ finally { progressBar.hidden = true; }
 Used on:
 - `/aspects/<name>` — shown during *Apply changes* (`POST /api/aspects/<name>/relations/batch`)
 - `/vdiff-matrix` — shown during *Apply changes* (`POST /api/vdiff-matrix/batch`)
-- `/` — shown during export (`GET /api/export-project`, `GET /api/export-aspects`, and `GET /api/export-consequences`), during full Excel import (`POST /api/project` + `POST /api/project/import`), and during the CONS-only import scan and commit steps (`POST /api/project/scan-cons-file` / `POST /api/project/commit-cons-import`)
+- `/` — shown during export (`GET /api/export-project`, `GET /api/export-aspects`, `GET /api/export-consequences`, and `GET /api/export-cardinal-utility`), during full Excel import (`POST /api/project` + `POST /api/project/import`), and during the CONS-only import scan and commit steps (`POST /api/project/scan-cons-file` / `POST /api/project/commit-cons-import`)
 
 ### Button styles
 
@@ -598,6 +657,8 @@ Both phases can be limited to one aspect's own VDiffs (plus the shared `NATURAL_
 
 - Consider incremental closure algorithm to reduce per-apply cost from O(n⁴) to O(n²) per relation
 
+- Cardinal utility export: scatter chart x-axis gridlines (level values via GCD-based `majorUnit` + `scaling.min`) are written to the XML correctly but are not rendered visibly by Excel — axis grading for numerical aspect charts is pending
+
 - ~~Live feedback on a manually-staged AL relation before Apply~~ Resolved: `closure(restrict_to_aspect=...)` computes a closure limited to one aspect (skips cross-aspect propagation, so it's cheap regardless of project size); `POST /api/aspects/<name>/relations/partial-closure` and the client's `refreshPartialClosure()` stage the newly-inferable consequences of a manual pick as amber-pending, alongside a "View closure" fix so it also departs from committed ∪ pending rather than the committed matrix alone.
 
 - ~~Transform the "/" view into a 'Project overview' view with no editing, to avoid different views with (partially) overlapping functionality~~ Resolved: aspects table expanded to Name/Data type/Description/#Levels/#Δ; consequence space dialog and add-consequence form removed from "/".
@@ -626,7 +687,7 @@ Both phases can be limited to one aspect's own VDiffs (plus the shared `NATURAL_
 
 - More feedback (and more human-readable) to user on import and export
 
-- Export for utility functions and utility difference calculations
+- ~~Export for utility functions and utility difference calculations~~ Resolved (cardinal utility export): `GET /api/export-cardinal-utility` produces a workbook with one `|ASP_U|` tab per aspect (yellow input cells for utility values and calibration coefficient, utility difference table, chart), a `|CONS_U|` tab (INDEX/MATCH utility lookups, weighted-sum total, compact consequence labels, horizontal bar chart), and a `|VDIFF_U|` tab (all utility differences per aspect, single vertical column chart). The returned `BytesIO` is post-processed with `zipfile`+regex to fix openpyxl's incorrect axis positioning in chart XML.
 
 - Client-side logging
 

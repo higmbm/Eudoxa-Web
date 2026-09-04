@@ -24,6 +24,7 @@
       {{ project_name }}
       <button id="btnManage">Manage project</button>
       <button id="btnExportProject">Export project</button>
+      <button id="btnExportCardinal">Cardinal utility export</button>
     </h1>
     <div id="exportProgressBar" class="progress-bar" hidden><div class="progress-bar-fill"></div></div>
 
@@ -195,6 +196,31 @@
           const disposition = res.headers.get("Content-Disposition") || "";
           const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
           a.download = match ? match[1].replace(/['"]/g, "") : "export.xlsx";
+          a.href = url;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        } finally {
+          exportProgressBar.hidden = true;
+        }
+      });
+    }
+
+    // ── Cardinal utility export ────────────────────────────────
+    const btnExportCardinal = document.getElementById("btnExportCardinal");
+    if (btnExportCardinal) {
+      btnExportCardinal.addEventListener("click", async () => {
+        exportProgressBar.hidden = false;
+        try {
+          const res = await fetch("/api/export-cardinal-utility");
+          if (!res.ok) { alert("Export failed."); return; }
+          const blob = await res.blob();
+          const url  = URL.createObjectURL(blob);
+          const a    = document.createElement("a");
+          const disposition = res.headers.get("Content-Disposition") || "";
+          const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+          a.download = match ? match[1].replace(/['"]/g, "") : "cardinal.xlsx";
           a.href = url;
           document.body.appendChild(a);
           a.click();

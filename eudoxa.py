@@ -24,6 +24,9 @@ ASP = "|ASP| "
 CONS = "|CONS|"
 DOM = "|DOM|"
 VDCM = "|VDCM|"
+ASP_U = "|ASP_U| "
+CONS_U = "|CONS_U|"
+VDIFF_U = "|VDIFF_U|"
 
 TRUE = "⊒"
 FALSE = "⋣"
@@ -1779,6 +1782,324 @@ class EudoxaManager:
         )
 
         return wb
+
+    def export_cardinal_utility_to_workbook(self):
+        """Export a cardinal-utility workbook.
+
+        One tab per aspect (named after the aspect) with:
+          - A1: aspect name, B1: data type, C1: 'c =', D1: yellow input cell (calibration coeff.)
+          - A2: description, C2: 'U'
+          - Rows 3+: A = level value, C = yellow input cell (utility value)
+          - Cols E+: utility difference table (row 2 = level headers, rows 3+ = C_i - C_k)
+
+        A |CONS_U| tab with aspect level columns, U formula columns,
+        and a final weighted-sum column.
+        """
+        import openpyxl
+        from openpyxl.styles import PatternFill, Border, Side
+        from openpyxl.utils import get_column_letter
+        from openpyxl.chart import BarChart, ScatterChart, Reference, Series
+        from openpyxl.chart.data_source import AxDataSource, StrData, StrVal
+
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+
+        yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+        thin = Side(style="thin")
+        box  = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+        aspect_names = list(self.aspects.keys())
+        n = len(aspect_names)
+
+        # ── One tab per aspect ──────────────────────────────────────────────
+        for asp_name, aspect in self.aspects.items():
+            ws = wb.create_sheet(title=ASP_U + asp_name)
+            ws["A1"] = aspect.name
+            ws["B1"] = aspect.data_type.__name__
+            ws["C1"] = "c ="
+            ws["D1"].fill   = yellow_fill
+            ws["D1"].border = box
+            ws["A2"] = aspect.description
+            ws["C2"] = "U"
+            n_levels = len(aspect.levels)
+            for i, level_str in enumerate(aspect.levels.keys()):
+                row = i + 3
+                ws.cell(row=row, column=1).value = parse_type(level_str, aspect.data_type)
+                cell = ws.cell(row=row, column=3)
+                cell.fill   = yellow_fill
+                cell.border = box
+
+            # Utility difference table: cols E onward (col 5)
+            # Row 2: column headers referencing level values in col A
+            for k in range(n_levels):
+                ws.cell(row=2, column=5 + k).value = f"=A{3 + k}"
+            # Rows 3+: differences C_i - C_k for each (row level i, col level k)
+            for i in range(n_levels):
+                for k in range(n_levels):
+                    cell = ws.cell(row=3 + i, column=5 + k)
+                    cell.value  = f"=C{3 + i}-C{3 + k}"
+                    cell.border = box
+
+            # Utility chart: anchored below the data
+            chart_anchor = f"A{n_levels + 4}"
+            if aspect.data_type in (int, float):
+                cht = ScatterChart()
+                cht.scatterStyle = "marker"
+                cht.title = asp_name
+                cht.x_axis.title = "Level"
+                cht.x_axis.axPos = "b"
+                cht.y_axis.title = "U"
+                cht.y_axis.axPos = "l"
+                cht.legend = None
+                cht.width = 12; cht.height = 9
+                xv = Reference(ws, min_col=1, min_row=3, max_row=2 + n_levels)
+                yv = Reference(ws, min_col=3, min_row=3, max_row=2 + n_levels)
+                ser = Series(yv, xv)
+                ser.marker.symbol = "circle"
+                ser.marker.size = 7
+                ser.graphicalProperties.line.noFill = True
+                cht.series.append(ser)
+                # Align x-axis gridlines with level values using GCD of spacings,
+                # so every level value has a gridline even when spacing is uneven.
+                lv_sorted = sorted(
+                    parse_type(lv, aspect.data_type)
+                    for lv in aspect.levels.keys()
+                )
+                if len(lv_sorted) >= 2:
+                    from decimal import Decimal
+                    from math import gcd as _gcd
+                    spacings = [round(b - a, 10)
+                                for a, b in zip(lv_sorted, lv_sorted[1:])]
+                    decs = [Decimal(str(s)) for s in spacings]
+                    scale = 10 ** max(abs(d.as_tuple().exponent) for d in decs)
+                    ints  = [round(float(d) * scale) for d in decs]
+                    g = ints[0]
+                    for x in ints[1:]:
+                        g = _gcd(g, x)
+                    unit = g / scale
+                    # Safety cap: avoid more than ~40 gridlines
+                    level_range = lv_sorted[-1] - lv_sorted[0]
+                    if unit > 0 and level_range / unit > 40:
+                        unit = min(spacings)
+                    cht.x_axis.scaling.min = float(lv_sorted[0])
+                    cht.x_axis.majorUnit  = float(unit)
+            else:
+                cht = BarChart()
+                cht.type = "col"
+                cht.title = asp_name
+                cht.legend = None
+                cht.width = 12; cht.height = 9
+                yv = Reference(ws, min_col=3, min_row=3, max_row=2 + n_levels)
+                cht.add_data(yv)
+                lv_labels = [str(parse_type(lv, aspect.data_type))
+                             for lv in aspect.levels.keys()]
+                sd = StrData(ptCount=len(lv_labels),
+                             pt=[StrVal(idx=i, v=l) for i, l in enumerate(lv_labels)])
+                for s in cht.series:
+                    s.cat = AxDataSource(strLit=sd)
+            ws.add_chart(cht, chart_anchor)
+
+        # ── |UTOT| tab ─────────────────────────────────────────────────────
+        ws = wb.create_sheet(title=CONS_U)
+
+        # Helper: Excel-safe sheet reference (quote if name has non-word chars)
+        def sheet_ref(name):
+            import re
+            return f"'{name}'" if re.search(r"[^\w]", name) else name
+
+        # Column indices:
+        #   aspect level values : cols 2 .. n+1  (B .. col n+1)
+        #   separator           : col  n+2
+        #   U value per aspect  : cols n+3 .. 2n+2  (one per aspect, consecutive)
+        #   separator           : col  2n+3
+        #   U total             : col  2n+4
+
+        # Row 1: aspect names in cols 2..n+1; calibration coeff formulas in U cols
+        for j, asp_name in enumerate(aspect_names):
+            ws.cell(row=1, column=j + 2).value = asp_name
+            sref  = sheet_ref(ASP_U + asp_name)
+            u_col = n + 3 + j
+            ws.cell(row=1, column=u_col).value = f"={sref}!$D$1"
+
+        # Row 2: data types in cols 2..n+1; U header formulas in U cols; "U" in total col
+        for j, asp_name in enumerate(aspect_names):
+            ws.cell(row=2, column=j + 2).value = self.aspects[asp_name].data_type.__name__
+            asp_col = get_column_letter(j + 2)
+            u_col   = n + 3 + j
+            ws.cell(row=2, column=u_col).value = f'="U["&{asp_col}1&"]"'
+        ws.cell(row=2, column=2 * n + 4).value = "U"
+
+        # Column layout (continued):
+        #   label string        : col  2n+6  (consequence name + level vector)
+        lbl_col    = 2 * n + 6
+        total_col  = 2 * n + 4
+        lbl_letter = get_column_letter(lbl_col)
+
+        ws.cell(row=2, column=lbl_col).value = "Label"
+
+        # Rows 3+: one row per consequence
+        n_cons = len(self.consequences)
+        for i, (cons_name, consequence) in enumerate(self.consequences.items()):
+            row = i + 3
+            ws.cell(row=row, column=1).value = cons_name
+            for j, asp_name in enumerate(aspect_names):
+                aspect  = self.aspects[asp_name]
+                level_v = consequence[asp_name]
+                if level_v is not None:
+                    ws.cell(row=row, column=j + 2).value = parse_type(level_v, aspect.data_type)
+                asp_col = get_column_letter(j + 2)
+                sref    = sheet_ref(ASP_U + asp_name)
+                u_col   = n + 3 + j
+                ws.cell(row=row, column=u_col).value = (
+                    f"=INDEX({sref}!$C:$C,MATCH({asp_col}{row},{sref}!$A:$A,0))"
+                )
+            # Weighted-sum: each U value multiplied by its row-1 calibration coeff
+            terms = [
+                f"{get_column_letter(n+3+j)}{row}*{get_column_letter(n+3+j)}$1"
+                for j in range(n)
+            ]
+            ws.cell(row=row, column=total_col).value = "=" + "+".join(terms)
+            # Compact label: name:⟨l1,l2,...⟩
+            level_refs = "&\",\"&".join(
+                f"{get_column_letter(j+2)}{row}" for j in range(n)
+            )
+            ws.cell(row=row, column=lbl_col).value = (
+                f'=A{row}&":⟨"&{level_refs}&"⟩"'
+            )
+
+        # Bar chart of total utility per consequence
+        if n_cons > 0:
+            # Build labels in Python (same logic as Excel formula) for strLit
+            cons_labels = []
+            for cons_name, consequence in self.consequences.items():
+                parts = [
+                    str(parse_type(consequence[a], self.aspects[a].data_type))
+                    if consequence[a] is not None else ""
+                    for a in aspect_names
+                ]
+                cons_labels.append(f"{cons_name}:⟨{','.join(parts)}⟩")
+
+            chart_u = BarChart()
+            chart_u.type     = "bar"          # horizontal bars
+            chart_u.grouping = "clustered"
+            chart_u.title    = "Consequence utilities"
+            chart_u.legend   = None
+            chart_u.width    = max(15, n_cons * 0.8)
+            chart_u.height   = max(10, n_cons * 0.8)
+            values_u = Reference(ws, min_col=total_col,
+                                 min_row=3, max_row=2 + n_cons)
+            chart_u.add_data(values_u)
+            str_u = StrData(ptCount=len(cons_labels),
+                            pt=[StrVal(idx=i, v=l) for i, l in enumerate(cons_labels)])
+            for s in chart_u.series:
+                s.cat = AxDataSource(strLit=str_u)
+            ws.add_chart(chart_u, f"A{n_cons + 4}")
+
+        # ── |VDIFF_U| tab ──────────────────────────────────────────────────
+        ws_vdu = wb.create_sheet(title=VDIFF_U)
+        current_row = 4
+        chart_anchors = []  # (asp_name, header_row, data_start, data_end)
+        all_labels = []     # category labels in row order, for inline chart data
+
+        for asp_name, aspect in self.aspects.items():
+            levels  = list(aspect.levels.keys())
+            n_lev   = len(levels)
+            sref    = sheet_ref(ASP_U + asp_name)
+            header_row = current_row
+            ws_vdu.cell(row=current_row, column=2).value = asp_name
+            ws_vdu.cell(row=current_row, column=3).value = asp_name
+            all_labels.append(asp_name)
+            current_row += 1
+            data_start = current_row
+            for i in range(n_lev):
+                for j in range(n_lev):
+                    if i == j:
+                        continue
+                    from_val = parse_type(levels[i], aspect.data_type)
+                    to_val   = parse_type(levels[j], aspect.data_type)
+                    label    = f"({from_val},{to_val})"
+                    diff_col = get_column_letter(5 + j)
+                    diff_row = 3 + i
+                    ws_vdu.cell(row=current_row, column=3).value = label
+                    ws_vdu.cell(row=current_row, column=4).value = f"={sref}!{diff_col}{diff_row}"
+                    all_labels.append(label)
+                    current_row += 1
+            chart_anchors.append((asp_name, header_row, data_start, current_row - 1))
+
+        if chart_anchors:
+            first_row = chart_anchors[0][1]   # header_row of first aspect
+            last_row  = chart_anchors[-1][3]  # data_end of last aspect
+            n_bars    = last_row - first_row + 1
+
+            chart = BarChart()
+            chart.type     = "col"
+            chart.grouping = "clustered"
+            chart.title    = "Utility value differences per aspect"
+            chart.legend   = None
+            chart.width    = max(15, n_bars * 1.2)
+            chart.height   = max(10, n_bars * 0.6)
+
+            values = Reference(ws_vdu, min_col=4, min_row=first_row, max_row=last_row)
+            chart.add_data(values)
+            str_data = StrData(ptCount=len(all_labels),
+                               pt=[StrVal(idx=i, v=lbl) for i, lbl in enumerate(all_labels)])
+            for s in chart.series:
+                s.cat = AxDataSource(strLit=str_data)
+            ws_vdu.add_chart(chart, "F4")
+
+        # Save to buffer then post-process chart XML so catAx/valAx match what
+        # Excel generates for a vertical column chart with labels below all bars.
+        import io as _io, zipfile as _zip, re as _re
+        raw_buf = _io.BytesIO()
+        wb.save(raw_buf)
+        raw_buf.seek(0)
+
+        with _zip.ZipFile(raw_buf, 'r') as zin:
+            names    = zin.namelist()
+            contents = {n: zin.read(n) for n in names}
+
+        for name in names:
+            if not (name.startswith('xl/charts/chart') and name.endswith('.xml')):
+                continue
+            xml = contents[name].decode('utf-8')
+            is_col = '<barDir val="col"' in xml   # vertical column chart
+            is_bar = '<barDir val="bar"' in xml   # horizontal bar chart
+            if not (is_col or is_bar):
+                continue
+            m_cat = _re.search(r'<catAx><axId val="(\d+)"', xml)
+            m_val = _re.search(r'<valAx><axId val="(\d+)"', xml)
+            if not (m_cat and m_val):
+                continue
+            cid, vid = m_cat.group(1), m_val.group(1)
+            # For column charts catAx is horizontal (axPos=b), valAx vertical (axPos=l).
+            # For horizontal bar charts catAx is vertical (axPos=l), valAx horizontal (axPos=b).
+            cat_pos = "b" if is_col else "l"
+            val_pos = "l" if is_col else "b"
+            new_cat = (
+                f'<catAx><axId val="{cid}"/><scaling><orientation val="minMax"/></scaling>'
+                f'<delete val="0"/><axPos val="{cat_pos}"/>'
+                f'<numFmt formatCode="General" sourceLinked="1"/>'
+                f'<tickLblPos val="low"/><crossAx val="{vid}"/>'
+                f'<auto val="1"/><lblAlgn val="ctr"/>'
+                f'<lblOffset val="100"/><noMultiLvlLbl val="0"/></catAx>'
+            )
+            new_val = (
+                f'<valAx><axId val="{vid}"/><scaling><orientation val="minMax"/></scaling>'
+                f'<delete val="0"/><axPos val="{val_pos}"/><majorGridlines/>'
+                f'<numFmt formatCode="General" sourceLinked="1"/>'
+                f'<tickLblPos val="nextTo"/><crossAx val="{cid}"/>'
+                f'<crosses val="autoZero"/><crossBetween val="between"/></valAx>'
+            )
+            xml = _re.sub(r'<catAx>.*?</catAx>', new_cat, xml, flags=_re.DOTALL)
+            xml = _re.sub(r'<valAx>.*?</valAx>', new_val, xml, flags=_re.DOTALL)
+            contents[name] = xml.encode('utf-8')
+
+        out_buf = _io.BytesIO()
+        with _zip.ZipFile(out_buf, 'w', _zip.ZIP_DEFLATED) as zout:
+            for name in names:
+                zout.writestr(name, contents[name])
+        out_buf.seek(0)
+        return out_buf
 
     def export_aspect_level_relations_to_excel(self, aspect_name: str, filename: str):
         import openpyxl

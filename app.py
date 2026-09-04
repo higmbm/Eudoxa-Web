@@ -1137,6 +1137,28 @@ def export_project():
         return {"error": f"Export failed: {e}"}, 500
 
 
+@app.get("/api/export-cardinal-utility")
+def export_cardinal_utility():
+    """Export a cardinal-utility workbook (one tab per aspect + |UTOT|)."""
+    import io
+    from flask import send_file
+    mgr = load_manager_or_400()
+    try:
+        buf = mgr.export_cardinal_utility_to_workbook()
+        project_name = session.get("project_name", "project")
+        filename = f"{project_name}_cardinal.xlsx"
+        return send_file(
+            buf,
+            mimetype="application/vnd.openxmlformats-officedocument"
+                     ".spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        logger.exception("Failed to export cardinal utility")
+        return {"error": f"Export failed: {e}"}, 500
+
+
 @app.get("/api/aspects/<aspect_name>/vdiff-classification")
 def get_vdiff_classification(aspect_name):
     """Return VDiffs for the given aspect classified into three buckets.
