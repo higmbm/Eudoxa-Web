@@ -41,6 +41,40 @@
     // ── Dominance graph state ─────────────────────────────────
     let domNetwork  = null;
     let domTrActive = true;
+    let domNodesDS      = null;  // current vis.DataSet of nodes, for selection-highlight updates
+    let domNodeComplete = {};    // id -> complete (bool), to rebuild each node's base color
+    let domHighlightA    = null; // id of the currently first-selected (purple) node, if any
+    let domHighlightB    = null; // id of the currently second-selected (orange) node, if any
+
+    const SEL_COLOR_A = "#8e44ad"; // purple — first selected node/consequence
+    const SEL_COLOR_B = "#e67e22"; // orange — second selected node/consequence
+
+    function nodeColorFor(complete, borderOverride) {
+      const base = complete
+        ? { background: "#dce8ff", border: "#7aa0e0",
+            highlight: { background: "#b8d0ff", border: "#4a7fd4" } }
+        : { background: "#fff8dc", border: "#c8a800",
+            highlight: { background: "#fff0a0", border: "#a07800" } };
+      if (!borderOverride) return base;
+      return { ...base, border: borderOverride,
+               highlight: { ...base.highlight, border: borderOverride } };
+    }
+
+    function setNodeSelectionColor(id, color) {
+      if (!domNodesDS || !domNodesDS.get(id)) return;
+      domNodesDS.update({
+        id,
+        color: nodeColorFor(domNodeComplete[id], color),
+        borderWidth: color ? 3 : 1
+      });
+    }
+
+    function clearNodeHighlights() {
+      if (domHighlightA) setNodeSelectionColor(domHighlightA, null);
+      if (domHighlightB) setNodeSelectionColor(domHighlightB, null);
+      domHighlightA = null;
+      domHighlightB = null;
+    }
 
     const btnDomTr = document.getElementById("btnDomTr");
     btnDomTr.addEventListener("click", () => {
@@ -74,23 +108,24 @@
       }
 
       // Build node lookup for comparison panel
-      domAspects = [];
+      // aspect_names is an explicit ordered array — n.levels is a JSON object,
+      // and Flask's jsonify sorts object keys alphabetically, so Object.keys(n.levels)
+      // would silently scramble column order relative to the rest of the app.
+      domAspects = data.aspect_names || [];
       domNodeData = {};
+      domNodeComplete = {};
       data.nodes.forEach(n => {
         domNodeData[n.id] = { name: n.name, levels: n.levels };
-        if (domAspects.length === 0 && n.levels)
-          domAspects = Object.keys(n.levels);
+        domNodeComplete[n.id] = n.complete;
       });
 
       // Node colours: blue = complete, yellow = incomplete
       const visNodes = new vis.DataSet(data.nodes.map(n => ({
         id: n.id, label: n.label, title: n.title,
-        color: n.complete
-          ? { background: "#dce8ff", border: "#7aa0e0",
-              highlight: { background: "#b8d0ff", border: "#4a7fd4" } }
-          : { background: "#fff8dc", border: "#c8a800",
-              highlight: { background: "#fff0a0", border: "#a07800" } }
+        color: nodeColorFor(n.complete),
+        borderWidth: 1
       })));
+      domNodesDS = visNodes;
 
       // Confirmed: solid blue; possible: dashed grey with '?' label
       const edgeList = [];
@@ -148,16 +183,28 @@
                                    { nodes: visNodes, edges: visEdges },
                                    JSON.parse(JSON.stringify(options)));
 
-      clearDomSelection();
+      // Native vis.js selection styling only ever highlights the single most
+      // recently clicked node, so it can't show "both nodes are selected" —
+      // domHighlightA/B (applied below) carry that instead and must survive
+      // this dataset rebuild, so only the native selection is reset here.
+      domNetwork.unselectAll();
+      if (domHighlightA) setNodeSelectionColor(domHighlightA, SEL_COLOR_A);
+      if (domHighlightB) setNodeSelectionColor(domHighlightB, SEL_COLOR_B);
+
       domNetwork.on("click", params => {
         if (params.nodes.length !== 1) { clearDomSelection(); return; }
         const clicked = params.nodes[0];
         if (!domFirstNode) {
+          clearNodeHighlights();  // starting a fresh pick — drop any previous pair's highlight
           domFirstNode = clicked;
+          domHighlightA = clicked;
+          setNodeSelectionColor(clicked, SEL_COLOR_A);
           showFirstNode(clicked);
         } else if (domFirstNode === clicked) {
           clearDomSelection();
         } else {
+          domHighlightB = clicked;
+          setNodeSelectionColor(clicked, SEL_COLOR_B);
           showDomCompare(domFirstNode, clicked);
           domFirstNode = null;
         }
@@ -207,19 +254,41 @@
 
     function clearDomSelection() {
       domFirstNode = null;
+      clearNodeHighlights();
       if (domNetwork) domNetwork.unselectAll();
       document.getElementById("domCompare").hidden = true;
+    }
+
+    function buildDomCompareHeaderRow() {
+      const tr = document.createElement("tr");
+      const tdBlank = document.createElement("td");
+      tdBlank.className = "dom-compare-header";
+      tr.appendChild(tdBlank);
+      domAspects.forEach(asp => {
+        const td = document.createElement("td");
+        td.className = "dom-compare-header";
+        td.textContent = asp;
+        tr.appendChild(td);
+      });
+      return tr;
     }
 
     function showFirstNode(idA) {
       const panel = document.getElementById("domCompare");
       const a = domNodeData[idA];
       if (!a) return;
-      let html = `<table class="data-table dom-compare-table">`;
-      html += `<tr><td class="dom-compare-name">${a.name}</td>`;
-      domAspects.forEach(asp => { html += `<td>${a.levels[asp] ?? ""}</td>`; });
-      html += "</tr></table>";
-      panel.innerHTML = html;
+      const table = document.createElement("table");
+      table.className = "data-table dom-compare-table";
+      table.appendChild(buildDomCompareHeaderRow());
+      const tr = document.createElement("tr");
+      const tdName = document.createElement("td");
+      tdName.className = "dom-compare-name dom-compare-sel-a"; tdName.textContent = a.name;
+      tr.appendChild(tdName);
+      domAspects.forEach(asp => {
+        const td = document.createElement("td"); td.textContent = a.levels[asp] ?? ""; tr.appendChild(td);
+      });
+      table.appendChild(tr);
+      panel.innerHTML = ""; panel.appendChild(table);
       panel.hidden = false;
     }
 
@@ -268,11 +337,12 @@
 
       const table = document.createElement("table");
       table.className = "data-table dom-compare-table";
+      table.appendChild(buildDomCompareHeaderRow());
 
       // Row A
       const trA = document.createElement("tr");
       const tdNameA = document.createElement("td");
-      tdNameA.className = "dom-compare-name"; tdNameA.textContent = a.name;
+      tdNameA.className = "dom-compare-name dom-compare-sel-a"; tdNameA.textContent = a.name;
       trA.appendChild(tdNameA);
       domAspects.forEach(asp => {
         const td = document.createElement("td"); td.textContent = a.levels[asp] ?? ""; trA.appendChild(td);
@@ -330,7 +400,7 @@
       // Row B
       const trB = document.createElement("tr");
       const tdNameB = document.createElement("td");
-      tdNameB.className = "dom-compare-name"; tdNameB.textContent = b.name;
+      tdNameB.className = "dom-compare-name dom-compare-sel-b"; tdNameB.textContent = b.name;
       trB.appendChild(tdNameB);
       domAspects.forEach(asp => {
         const td = document.createElement("td"); td.textContent = b.levels[asp] ?? ""; trB.appendChild(td);
