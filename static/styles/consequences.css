@@ -84,6 +84,22 @@
   white-space: nowrap;
 }
 
+/* Selection accent on the name cell, matching the graph node's border
+   colour — .dom-compare-sel-a/-b are only used on /dominance-graph, where
+   there's a graph node to match against. */
+.dom-compare-sel-a {
+  border-left: 4px solid #8e44ad !important;
+}
+
+.dom-compare-sel-b {
+  border-left: 4px solid #e67e22 !important;
+}
+
+.dom-compare-header {
+  background: #f0f0f0;
+  font-weight: 600;
+}
+
 .dom-compare-divider {
   background: #f4f4f4;
   border-color: #ccc !important;

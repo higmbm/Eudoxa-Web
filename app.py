@@ -1377,7 +1377,8 @@ def get_dominance_graph():
         return {
             "nodes":           nodes,
             "edges_confirmed": edges_confirmed,
-            "edges_possible":  edges_possible
+            "edges_possible":  edges_possible,
+            "aspect_names":    list(mgr.aspects.keys())
         }, 200
     except Exception as e:
         logger.exception("Failed to build dominance graph")

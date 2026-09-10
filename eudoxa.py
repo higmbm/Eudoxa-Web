@@ -798,6 +798,19 @@ class EudoxaManager:
         included = [n for n in names if n not in excluded]
         return included, excluded
 
+    def _cons_display(self, name: str) -> str:
+        """Consequence repr in the manager's *current* aspect order.
+
+        Consequence.__repr__ iterates the consequence's own aspect_levels
+        dict, whose key order was fixed when the consequence was created
+        (or last had an aspect added to it) and is untouched by a later
+        EudoxaManager.reorder_aspects call. This mirrors __repr__'s bracket
+        format but reads levels via self.aspects (current order) instead,
+        so it stays in sync with aspect reordering.
+        """
+        c = self.consequences[name]
+        return "⟨" + ", ".join(str(c[an]) for an in self.aspects) + "⟩"
+
     def create_dominance_graph(self, use_tr: bool = True):
         """Build a dominance graph with confirmed and possible edges.
 
@@ -846,18 +859,17 @@ class EudoxaManager:
                     consequences[na], consequences[nb], aspect_rel
                 )
                 if result == 'confirmed':
-                    confirmed_pairs.append((str(consequences[na]),
-                                            str(consequences[nb])))
+                    confirmed_pairs.append((self._cons_display(na),
+                                            self._cons_display(nb)))
                 elif result == 'possible':
-                    possible_pairs.append((str(consequences[na]),
-                                           str(consequences[nb])))
+                    possible_pairs.append((self._cons_display(na),
+                                           self._cons_display(nb)))
 
         # Optionally apply transitive reduction to confirmed edges
-        str_to_name = {str(c): n for n, c in consequences.items()}
         if use_tr and confirmed_pairs:
             g = nx.DiGraph()
             for n in names:
-                g.add_node(str(consequences[n]))
+                g.add_node(self._cons_display(n))
             g.add_edges_from(confirmed_pairs)
             if nx.is_directed_acyclic_graph(g):
                 g = nx.transitive_reduction(g)
@@ -865,7 +877,7 @@ class EudoxaManager:
             # If not a DAG (shouldn't happen with consistent data), keep all
 
         nodes = [
-            {"id": str(consequences[n]), "name": n,
+            {"id": self._cons_display(n), "name": n,
              "complete": node_complete[n]}
             for n in names
         ]
@@ -877,11 +889,11 @@ class EudoxaManager:
 
     def create_dominance_table(self) -> Dict[Tuple[str, str], bool]:
         dom_table = {}
-        for ca in self.consequences.values():
-            for cb in self.consequences.values():
+        for na, ca in self.consequences.items():
+            for nb, cb in self.consequences.items():
                 dom_tf = self.dom(ca, cb)
                 if dom_tf:
-                    cacb = (str(ca), str(cb))
+                    cacb = (self._cons_display(na), self._cons_display(nb))
                     dom_table[cacb] = dom_tf
         return dom_table
 

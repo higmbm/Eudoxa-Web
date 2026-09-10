@@ -618,12 +618,27 @@
     document.getElementById("btnClearConsCompare")
       .addEventListener("click", clearConsCompare);
 
+    function buildCompareHeaderRow() {
+      const tr = document.createElement("tr");
+      const tdBlank = document.createElement("td");
+      tdBlank.className = "dom-compare-header";
+      tr.appendChild(tdBlank);
+      consAspects.forEach(asp => {
+        const td = document.createElement("td");
+        td.className = "dom-compare-header";
+        td.textContent = asp;
+        tr.appendChild(td);
+      });
+      return tr;
+    }
+
     function showConsFirstRow(name) {
       consAspects = aspectData.map(a => a.name);
       const a = consNodeData[name];
       if (!a) return;
       const table = document.createElement("table");
       table.className = "data-table dom-compare-table";
+      table.appendChild(buildCompareHeaderRow());
       const tr = document.createElement("tr");
       const tdName = document.createElement("td");
       tdName.className = "dom-compare-name"; tdName.textContent = a.name;
@@ -670,6 +685,7 @@
 
       const table = document.createElement("table");
       table.className = "data-table dom-compare-table";
+      table.appendChild(buildCompareHeaderRow());
 
       // Row A
       const trA = document.createElement("tr");
