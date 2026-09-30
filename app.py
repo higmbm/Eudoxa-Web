@@ -823,28 +823,22 @@ def batch_patch_relations(aspect_name):
             if lvl and lvl not in aspect.levels:
                 return {"error": f"Level '{lvl}' not found in aspect '{aspect_name}'"}, 404
 
-    all_adds          = []
-    all_inferred_adds = []
+    # One staging pass over the whole batch (two full closures in total, not
+    # two per change); nothing is written if the batch collides.
+    try:
+        adds, colls, inferred_adds = mgr.try_set_aspect_level_relations(
+            aspect_name, [(ch["la"], ch["lb"], ch["relation"]) for ch in changes]
+        )
+    except ValueError as e:
+        return {"error": str(e)}, 404
 
-    for ch in changes:
-        la, lb, rel = ch["la"], ch["lb"], ch["relation"]
-        try:
-            adds, colls, inferred_adds = mgr.try_set_aspect_level_relation(
-                aspect_name, la, lb, rel
-            )
-        except ValueError as e:
-            return {"error": str(e)}, 404
-
-        if colls:
-            return {"colls": [_fmt_al_coll(c) for c in colls]}, 409
-
-        all_adds.extend(adds)
-        all_inferred_adds.extend(inferred_adds)
+    if colls:
+        return {"colls": [_fmt_al_coll(c) for c in colls]}, 409
 
     save_manager(mgr)
     return {
-        "adds":          [_fmt_al_entry(e) for e in all_adds],
-        "inferred_adds": [_fmt_al_entry(e) for e in all_inferred_adds]
+        "adds":          [_fmt_al_entry(e) for e in adds],
+        "inferred_adds": [_fmt_al_entry(e) for e in inferred_adds]
     }, 200
 
 
@@ -1267,8 +1261,8 @@ def patch_vdiff_relation(an1, l1a, l1b, an2, l2a, l2b):
 def batch_patch_vdiff_relations():
     """Apply a batch of vdiff order relation changes atomically.
     Body: { "changes": [{ "an1", "l1a", "l1b", "an2", "l2a", "l2b", "relation" }, ...] }
-    Changes are applied sequentially; if any causes a collision the whole batch
-    is aborted (manager is not saved) and 409 is returned with collision details.
+    All changes are staged together and checked with a single closure; if the
+    batch collides nothing is saved and 409 is returned with collision details.
     Response on success:  { "adds": [...], "inferred_adds": [...] }
     Response on collision: { "colls": [...] }, 409
     """
@@ -1295,32 +1289,24 @@ def batch_patch_vdiff_relations():
             if lb != "*" and lb not in mgr.aspects[asp].levels:
                 return {"error": f"Level '{lb}' not found in aspect '{asp}'"}, 404
 
-    # ── Apply changes sequentially; abort all on first collision ─────────────
-    all_adds          = []
-    all_inferred_adds = []
+    # ── Stage the whole batch; abort all on collision ────────────────────────
+    batch = [(_make_vd(ch["an1"], ch["l1a"], ch["l1b"]),
+              _make_vd(ch["an2"], ch["l2a"], ch["l2b"]),
+              ch["relation"]) for ch in changes]
+    try:
+        adds, colls, inferred_adds = mgr.try_set_vdiff_order_relations(batch)
+    except Exception as e:
+        logger.exception("Failed to set vdiff relations in batch")
+        return {"error": str(e)}, 500
 
-    for ch in changes:
-        vd1 = _make_vd(ch["an1"], ch["l1a"], ch["l1b"])
-        vd2 = _make_vd(ch["an2"], ch["l2a"], ch["l2b"])
-        try:
-            adds, colls, inferred_adds = mgr.try_set_vdiff_order_relation(
-                vd1, vd2, ch["relation"]
-            )
-        except Exception as e:
-            logger.exception("Failed to set vdiff relation in batch")
-            return {"error": str(e)}, 500
-
-        if colls:
-            # Collision — abort entire batch (manager not saved)
-            return {"colls": [_fmt_coll(c) for c in colls]}, 409
-
-        all_adds.extend(adds)
-        all_inferred_adds.extend(inferred_adds)
+    if colls:
+        # Collision — abort entire batch (manager not saved)
+        return {"colls": [_fmt_coll(c) for c in colls]}, 409
 
     save_manager(mgr)
     return {
-        "adds":          [_fmt_entry(a) for a in all_adds],
-        "inferred_adds": [_fmt_entry(a) for a in all_inferred_adds]
+        "adds":          [_fmt_entry(a) for a in adds],
+        "inferred_adds": [_fmt_entry(a) for a in inferred_adds]
     }, 200
 
 

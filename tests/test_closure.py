@@ -612,5 +612,215 @@ class TestTryStageAspectLevelRelations(unittest.TestCase):
         self.assertEqual(mgr.vdiff_comparison_matrix, before)
 
 
+# ── Batch apply (try_set_aspect_level_relations / try_set_vdiff_order_relations) ─
+
+def snapshot(mgr):
+    return {vd: dict(row) for vd, row in mgr.vdiff_comparison_matrix.items()}
+
+
+def count_closures(test, mgr):
+    """Wrap mgr.closure so the test can assert how many times it ran."""
+    calls = []
+    original = mgr.closure
+    def counting(*args, **kwargs):
+        calls.append(kwargs.get("restrict_to_aspect"))
+        return original(*args, **kwargs)
+    mgr.closure = counting
+    test.addCleanup(lambda: setattr(mgr, "closure", original))
+    return calls
+
+
+def conclusions(entries):
+    """Set of (vd1_key, rel, vd2_key) facts established by adds entries."""
+    from eudoxa import _vdiff_key
+    return {(_vdiff_key(vd1), r, _vdiff_key(vd2)) for _, _, (vd1, r, vd2) in entries}
+
+
+def two_aspect_mgr():
+    """A: 1..4 and B: 1..3, with B fully ordered and one cross-aspect vdiff
+    comparison, so applying A's relations triggers cross-aspect inference."""
+    mgr = make_mgr({"A": ["1", "2", "3", "4"], "B": ["1", "2", "3"]})
+    for la, lb in [("1", "2"), ("2", "3"), ("1", "3")]:
+        mgr.try_set_aspect_level_relation("B", la, lb, BT)
+    mgr.try_set_vdiff_order_relation(VDiff("A", "1", "2"), VDiff("B", "1", "3"), GTE)
+    return mgr
+
+
+class TestTrySetAspectLevelRelationsBatch(unittest.TestCase):
+    """A batch applied with try_set_aspect_level_relations must give the same
+    result as applying the same changes one at a time, but with a fixed number
+    of closures, and must write nothing when the batch collides."""
+
+    CHANGES = [("1", "2", BT), ("2", "3", BT), ("3", "4", BTE), ("1", "4", BT)]
+
+    def test_batch_matches_sequential(self):
+        seq, bat = two_aspect_mgr(), two_aspect_mgr()
+        seq_adds, seq_inferred = [], []
+        for la, lb, r in self.CHANGES:
+            adds, colls, inferred = seq.try_set_aspect_level_relation("A", la, lb, r)
+            self.assertEqual(colls, [])
+            seq_adds.extend(adds)
+            seq_inferred.extend(inferred)
+
+        adds, colls, inferred = bat.try_set_aspect_level_relations("A", self.CHANGES)
+        self.assertEqual(colls, [])
+        self.assertEqual(snapshot(bat), snapshot(seq))
+        self.assertEqual(adds, seq_adds)
+        # Same set of new facts. Not inferred-vs-inferred: 1≻4 is first
+        # *inferred* one-at-a-time (from 1≻2≻3⪰4) before being set explicitly,
+        # whereas in the batch it is explicit from the start.
+        self.assertEqual(conclusions(inferred) | conclusions(adds),
+                         conclusions(seq_inferred) | conclusions(seq_adds))
+        self.assertIn((VDiff("A", "1", "4"), TRUE, VDiff(None, None, None)),
+                      conclusions(seq_inferred) - conclusions(inferred))
+
+    def test_mixed_unset_and_set_matches_sequential(self):
+        # Unset a committed 3≻4 and set an unrelated relation in one batch.
+        # (Reversing it to 4≻3 in the same batch collides on both paths: the
+        # staging area is the committed *closure*, which still holds facts
+        # derived from 3≻4 after its explicit entries are unset.)
+        changes = [("3", "4", UNDEFINED), ("2", "3", EQ)]
+        seq, bat = two_aspect_mgr(), two_aspect_mgr()
+        seq.try_set_aspect_level_relation("A", "3", "4", BT)
+        bat.try_set_aspect_level_relation("A", "3", "4", BT)
+        for la, lb, r in changes:
+            self.assertEqual(seq.try_set_aspect_level_relation("A", la, lb, r)[1], [])
+        self.assertEqual(bat.try_set_aspect_level_relations("A", changes)[1], [])
+        self.assertEqual(snapshot(bat), snapshot(seq))
+
+    def test_two_full_closures_regardless_of_batch_size(self):
+        mgr = two_aspect_mgr()
+        calls = count_closures(self, mgr)
+        _, colls, _ = mgr.try_set_aspect_level_relations("A", self.CHANGES)
+        self.assertEqual(colls, [])
+        self.assertEqual(calls, [None, None])
+
+    def test_collision_within_batch_writes_nothing(self):
+        mgr = two_aspect_mgr()
+        before = snapshot(mgr)
+        # 1≻2, 2≻3 imply 1≻3; 3≻1 contradicts it.
+        adds, colls, inferred = mgr.try_set_aspect_level_relations(
+            "A", [("1", "2", BT), ("2", "3", BT), ("3", "1", BT)])
+        self.assertGreater(len(colls), 0)
+        self.assertEqual((adds, inferred), ([], []))
+        self.assertEqual(snapshot(mgr), before)
+
+    def test_collision_with_committed_closure_writes_nothing(self):
+        mgr = two_aspect_mgr()
+        mgr.try_set_aspect_level_relations("A", [("1", "2", BT), ("2", "3", BT)])
+        before = snapshot(mgr)
+        # 1≻3 is only inferred (not stored); a batch asserting 3≻1 must collide.
+        _, colls, _ = mgr.try_set_aspect_level_relations(
+            "A", [("3", "4", BT), ("3", "1", BT)])
+        self.assertGreater(len(colls), 0)
+        self.assertEqual(snapshot(mgr), before)
+
+    def test_unknown_level_raises_before_any_write(self):
+        mgr = two_aspect_mgr()
+        before = snapshot(mgr)
+        with self.assertRaises(ValueError):
+            mgr.try_set_aspect_level_relations("A", [("1", "2", BT), ("1", "9", BT)])
+        self.assertEqual(snapshot(mgr), before)
+
+
+class TestTrySetVdiffOrderRelationsBatch(unittest.TestCase):
+    """Same guarantees for the vdiff-matrix batch path."""
+
+    def changes(self):
+        return [(VDiff("A", "2", "3"), VDiff("B", "1", "2"), GTE),
+                (VDiff("A", "3", "4"), VDiff("B", "2", "3"), GT),
+                (VDiff("A", "1", "3"), VDiff("A", "1", "2"), GT)]
+
+    def test_batch_matches_sequential(self):
+        seq, bat = two_aspect_mgr(), two_aspect_mgr()
+        seq_adds = []
+        for vd1, vd2, r in self.changes():
+            adds, colls, _ = seq.try_set_vdiff_order_relation(vd1, vd2, r)
+            self.assertEqual(colls, [])
+            seq_adds.extend(adds)
+        adds, colls, _ = bat.try_set_vdiff_order_relations(self.changes())
+        self.assertEqual(colls, [])
+        self.assertEqual(snapshot(bat), snapshot(seq))
+        self.assertEqual(adds, seq_adds)
+
+    def test_one_full_closure_regardless_of_batch_size(self):
+        mgr = two_aspect_mgr()
+        calls = count_closures(self, mgr)
+        _, colls, _ = mgr.try_set_vdiff_order_relations(self.changes())
+        self.assertEqual(colls, [])
+        self.assertEqual(calls, [None])
+
+    def test_collision_within_batch_writes_nothing(self):
+        mgr = two_aspect_mgr()
+        before = snapshot(mgr)
+        vd1, vd2 = VDiff("A", "2", "3"), VDiff("B", "1", "2")
+        adds, colls, inferred = mgr.try_set_vdiff_order_relations(
+            [(vd1, vd2, GT), (vd2, vd1, GT)])
+        self.assertGreater(len(colls), 0)
+        self.assertEqual((adds, inferred), ([], []))
+        self.assertEqual(snapshot(mgr), before)
+
+
+class TestBatchRoutes(unittest.TestCase):
+    """The two batch endpoints: 200 + saved on success, 409 + nothing saved on
+    collision."""
+
+    def setUp(self):
+        import tempfile
+        from unittest import mock
+        import app as flaskapp
+        self.flaskapp = flaskapp
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        patcher = mock.patch.object(flaskapp, "_STORE_DIR", tmp.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.client = flaskapp.app.test_client()
+        with self.client.session_transaction() as sess:
+            sess["sid"] = "abc123"
+        # save_manager reads the sid from the session, so it needs a request context.
+        with flaskapp.app.test_request_context():
+            from flask import session
+            session["sid"] = "abc123"
+            flaskapp.save_manager(two_aspect_mgr())
+
+    def stored(self):
+        import json
+        with open(self.flaskapp._store_path("abc123"), encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_al_batch_success_saves(self):
+        before = self.stored()
+        res = self.client.post("/api/aspects/A/relations/batch", json={"changes": [
+            {"la": "1", "lb": "2", "relation": BT}, {"la": "2", "lb": "3", "relation": BT}]})
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.get_json()["adds"])
+        self.assertNotEqual(self.stored(), before)
+
+    def test_al_batch_collision_saves_nothing(self):
+        before = self.stored()
+        res = self.client.post("/api/aspects/A/relations/batch", json={"changes": [
+            {"la": "1", "lb": "2", "relation": BT}, {"la": "2", "lb": "1", "relation": BT}]})
+        self.assertEqual(res.status_code, 409)
+        self.assertTrue(res.get_json()["colls"])
+        self.assertEqual(self.stored(), before)
+
+    def test_vdiff_batch_collision_saves_nothing(self):
+        before = self.stored()
+        ch = {"an1": "A", "l1a": "2", "l1b": "3", "an2": "B", "l2a": "1", "l2b": "2"}
+        rev = {"an1": "B", "l1a": "1", "l1b": "2", "an2": "A", "l2a": "2", "l2b": "3"}
+        res = self.client.post("/api/vdiff-matrix/batch", json={"changes": [
+            dict(ch, relation=GT), dict(rev, relation=GT)]})
+        self.assertEqual(res.status_code, 409)
+        self.assertEqual(self.stored(), before)
+
+    def test_vdiff_batch_success_saves(self):
+        before = self.stored()
+        ch = {"an1": "A", "l1a": "2", "l1b": "3", "an2": "B", "l2a": "1", "l2b": "2"}
+        res = self.client.post("/api/vdiff-matrix/batch", json={"changes": [dict(ch, relation=GTE)]})
+        self.assertEqual(res.status_code, 200)
+        self.assertNotEqual(self.stored(), before)
+
+
 if __name__ == "__main__":
     unittest.main()

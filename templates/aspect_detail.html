@@ -753,29 +753,34 @@
       const progressBar = document.getElementById("progressBar");
       progressBar.hidden = false;
       try {
-        const res = await fetch(
-          `/api/aspects/${encodeURIComponent(ASPECT_NAME)}/relations/batch`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ changes })
-          }
-        );
-        const json = await res.json().catch(() => ({}));
+        let res = null;
+        try {
+          res = await fetch(
+            `/api/aspects/${encodeURIComponent(ASPECT_NAME)}/relations/batch`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ changes })
+            }
+          );
+        } catch (e) { /* no response at all — reported below */ }
+        const json = res ? await res.json().catch(() => ({})) : {};
         // Apply's own result (below) is authoritative either way, so any
         // feedback from before this click — success or collision, from Apply
         // or from the partial-closure preview — is now stale.
         clearFeedbackPanels();
-        if (res.ok) {
+        if (res && res.ok) {
           pendingChanges.clear();
           updateBatchButtons();
           showBatchInferencePanel(n, json.adds || [], json.inferred_adds || [], []);
           await loadRelations();
           await loadLevelGraph();
-        } else {
+        } else if (res && res.status === 409 && json.colls) {
           // Keep pending selections so the user can deselect the offender and retry.
-          showBatchInferencePanel(n, [], [],
-            json.colls || (json.error ? [json.error] : ["Unknown error"]));
+          showBatchInferencePanel(n, [], [], json.colls);
+        } else {
+          // Timeout, server error, lost connection: not a collision.
+          showApplyErrorPanel(n, applyFailureMessage(res, json));
         }
       } finally {
         progressBar.hidden = true;
@@ -1083,6 +1088,15 @@
         panel.className = "inference-panel asp-infer-ok";
       }
       panel.innerHTML = inner;
+      panel.hidden = false;
+    }
+
+    function showApplyErrorPanel(n, message) {
+      const panel = document.getElementById("inferencePanel");
+      panel.innerHTML = `<p class="asp-infer-heading">`
+                      + `<strong>Changes not applied.</strong> ${message} `
+                      + `${n} change(s) still pending.</p>`;
+      panel.className = "inference-panel asp-infer-coll";
       panel.hidden = false;
     }
 
