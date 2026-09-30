@@ -1,15 +1,23 @@
 from typing import Dict, List, Tuple, Type
 
 import logging
+import os
+from logging.handlers import RotatingFileHandler
+
+# Log level from EUDOXA_LOG_LEVEL (e.g. DEBUG for local troubleshooting);
+# defaults to INFO, since DEBUG output grows with the square of the VDCM size.
+_LOG_LEVEL = getattr(logging, os.getenv("EUDOXA_LOG_LEVEL", "INFO").upper(), logging.INFO)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(_LOG_LEVEL)
 
 console_handler = logging.StreamHandler()
-file_handler = logging.FileHandler('eudoxa.log', 'w', 'utf-8')
+# Append (not overwrite) so worker restarts don't erase the log; rotate at 5 MB.
+file_handler = RotatingFileHandler('eudoxa.log', 'a', maxBytes=5_000_000,
+                                   backupCount=3, encoding='utf-8')
 
-console_handler.setLevel(logging.DEBUG)
-file_handler.setLevel(logging.DEBUG)
+console_handler.setLevel(_LOG_LEVEL)
+file_handler.setLevel(_LOG_LEVEL)
 
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 console_handler.setFormatter(formatter)

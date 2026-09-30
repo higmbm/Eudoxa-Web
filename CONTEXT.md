@@ -149,6 +149,19 @@ load_manager_or_400()   # reads and deserialises from file store; aborts 400 if 
 save_manager(mgr)       # serialises and writes to file store
 ```
 
+### Logging
+
+The `eudoxa` logger is configured at import time at the top of `eudoxa.py`, with two handlers sharing one format (`%(asctime)s - %(name)s - %(levelname)s - %(message)s`):
+
+- a `StreamHandler` (stderr) — on PythonAnywhere this output ends up in both the error log and the server log
+- a `RotatingFileHandler` writing `eudoxa.log` (relative to the process working directory) in **append** mode, rotating at 5 MB with 3 backups (`eudoxa.log.1` … `.3`), i.e. at most ~20 MB on disk
+
+The level for the logger and both handlers comes from the `EUDOXA_LOG_LEVEL` environment variable (`DEBUG`/`INFO`/`WARNING`/`ERROR`, case-insensitive; unknown values fall back to `INFO`), default `INFO`. DEBUG output is very verbose: `expand_vdiff_comparison_matrix` logs one `Initialising …` line per new vdcm cell, so adding one level to a mid-sized project produces thousands of lines, and writing them took ~1 s of worker time per request in production. Use DEBUG only for local troubleshooting.
+
+Earlier versions opened the file handler in `'w'` mode (log erased on every worker restart) with a hard-coded DEBUG level.
+
+`app.py`'s own `logger` (`logging.getLogger(__name__)`) has no handlers configured; its `logger.exception(...)` output reaches stderr only via Python's last-resort handler (WARNING and above) and so ends up in the PythonAnywhere error log, not in `eudoxa.log`. Log lines carry no session ID or request timing, so entries from concurrent users cannot be told apart — see "Planned/pending work".
+
 ### `to_dict` / `from_dict` serialisation
 
 The file format is versioned via `"__schema__"` in the top-level dict.
@@ -668,6 +681,10 @@ Both phases can be limited to one aspect's own VDiffs (plus the shared `NATURAL_
 
 - **Response time** for Apply changes in `/vdiff-matrix` and `/aspects/<name>` is dominated by the closure computation. Worst-case complexity is O(n⁴) but typical cost is O(d·n³) with d ≈ 2–4. An incremental closure algorithm (O(n²) per relation change) remains a longer-term option.
 
+  **Observed in production (2026-09-30, three concurrent student users, PythonAnywhere free plan = one uWSGI worker, 300 s request limit):** `POST /api/aspects/*/relations/batch` had a mean response time of ~57 s over 36 calls; four calls (on aspects "Land use" and "Groundwater vulnerbility") hit the 300 s limit, returned 504, and uWSGI killed and respawned the worker (`HARAKIRI`) three times. `POST .../relations/partial-closure` — despite being restricted to one aspect — reached 45–78 s. Because the single worker serialises all requests, trivial requests from *other* users (e.g. `PATCH /api/aspects/<name>`, `GET /`) queued behind these and showed 60–260 s response times, and browsers giving up produced HTTP 499 / `SIGPIPE` / `OSError: write error` entries. No Python tracebacks occurred. Conclusion: closure cost is the root cause; more web workers (paid plan) would stop users blocking each other but would not make a single closure finish. Closure performance must be addressed before beta testing.
+
+- **Non-atomic store writes / no locking:** `save_manager` writes the store file in place. A worker killed mid-write (see above) can leave a truncated JSON file. With more than one worker, concurrent read-modify-write requests from the same session could also lose updates. Fix: write to a temp file + `os.replace`, and add per-session file locking before moving to a multi-worker plan.
+
 ---
 
 ## Planned/pending work
@@ -708,6 +725,6 @@ Both phases can be limited to one aspect's own VDiffs (plus the shared `NATURAL_
 
 - Client-side logging
 
-- Server-side logging
+- Server-side logging — partly done: configurable level via `EUDOXA_LOG_LEVEL` (default INFO), append mode with rotation (see "Logging"). Still pending: session ID and request ID on every line, per-request and per-closure timing, downloadable per-session log.
 
 - ~~Change aspect data type to "categorical" (str) and "numerical" (float)~~ Resolved differently: type names are displayed as "Categorical (text)" / "Numerical (general)" / "Numerical (integer only)" throughout the UI (internal representation and Excel format unchanged); `/aspects/<name>` supports upcast/downcast via an inline type dropdown with validation.
