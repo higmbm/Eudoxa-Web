@@ -16,7 +16,9 @@ flask-pythonanywhere-test/
 ├── eudoxa.py               Core data model — all domain logic
 ├── requirements.txt
 ├── tests/
-│   └── test_closure.py     Unit tests for EudoxaManager.closure()
+│   ├── test_closure.py     Unit tests for EudoxaManager.closure(), batch apply, batch routes
+│   ├── test_serialization.py
+│   └── test_project_file.py Save/Open project file, integrity_problems, session cookie
 ├── static/
 │   ├── common.js           Shared JS utilities
 │   ├── nav.js              Navbar injection (fetches project name + aspects)
@@ -140,6 +142,35 @@ The `EudoxaManager` is serialised via `to_dict()` / `from_dict()` and persisted 
 
 The store directory is configurable via the `MANAGER_STORE_DIR` environment variable, defaulting to `.manager_store/` adjacent to `app.py`.
 
+**Session lifetime.** The session is *permanent* (`app.permanent_session_lifetime = 90 days`): `_get_sid()` marks a new session permanent, and the `keep_session_alive` `before_request` hook upgrades sessions issued before this was introduced. With Flask's default `SESSION_REFRESH_EACH_REQUEST`, the cookie is re-issued on every request, so the 90 days restart on each visit. Before this, the cookie was a browser-session cookie: closing the browser usually orphaned the project (the store file stayed on the server, but nothing led back to it). The link is still per browser — a different browser, computer or private window starts with no project, which is what "Save/Open project from file" is for.
+
+**Name and author in the store file.** `save_manager` writes `project_name` and `author` (from the session) as extra top-level keys next to `mgr.to_dict()`, so store files are self-describing (useful when inspecting `.manager_store/` or a student's file). `from_dict` ignores them; the session remains the source of truth. `PUT /api/project` re-saves the store so the copy follows a rename.
+
+### Project files (Save / Open project from file)
+
+`GET /api/project/download` returns `<project name>_<YYYY-MM-DD>.eudoxa.json` (name passed through `_safe_filename`):
+
+```json
+{ "format": "eudoxa-project", "format_version": 1,
+  "build": "c7d3ccc (2026-09-30)", "exported_at": "2026-09-30T12:00:00+00:00",
+  "project_name": "...", "author": "...",
+  "project": { "__schema__": 2, "aspects": {...}, ... } }
+```
+
+`project` is exactly `mgr.to_dict()`. `build` is `BUILD`, read once at startup from `git log -1 --format=%h (%cs)` (`"unknown"` outside a git checkout); it is meant to be reused by logging and bug reports.
+
+`POST /api/project/open` (multipart, field `file`) accepts that wrapper **or a raw store file** (`__schema__` + `aspects` at top level — e.g. a `.manager_store/<sid>.json` sent in by a student). Rules:
+
+- Only when no project is open (409 otherwise; a session whose store file has vanished counts as no project). Matches the Excel import's "empty project only" rule; the user deletes the current project first.
+- Size limit `MAX_PROJECT_FILE_BYTES` (10 MB, read with a bounded `stream.read`) → 413.
+- Not JSON / not a dict / neither format → 400 "This is not an Eudoxa project file."; `format_version` newer than `PROJECT_FILE_VERSION` → 400.
+- `EudoxaManager.from_dict` then `integrity_problems()`; any exception or problem → 400 with up to 20 `problems`, nothing saved.
+- Name: the file's `project_name`, else the filename stem, else "Opened project".
+
+`EudoxaManager.integrity_problems()` is a *structural* check for untrusted input, not a consistency check (that's the closure's job): aspect keys match names; the vdcm contains every vdiff implied by the levels and nothing unknown (besides `NATURAL_ZERO`), is square (every row has the full key set — `set_vdiff_relation` raises `KeyError` otherwise), and holds only `TRUE`/`FALSE`/`UNDEFINED`; consequences reference existing aspects and levels (`None` allowed). All 31 real store files available on 2026-09-30 passed it.
+
+UI (`index.html`): *Save project to file* in the project header (plain `location.href` navigation, so the browser handles non-ASCII filenames from `Content-Disposition`); *Open project from file* on the no-project start page next to *Import project from Excel*; a `.storage-note` line on both explaining that projects are linked to the browser. Open errors go to `showImportResult`, whose error branch now also lists `problems` — inserted with `textContent`, since they quote names from the uploaded file. JSON is positioned as exact backup/restore (and what a bug report will attach); Excel remains the format for reading/editing outside the app.
+
 #### Session helpers
 
 ```python
@@ -261,6 +292,8 @@ Both cases also add the elements Excel expects but openpyxl omits: `<delete val=
 | `GET` | `/api/project` | Returns `{ project_name, author }`; 404 if no store file exists |
 | `DELETE` | `/api/project` | Clears session and removes store file |
 | `POST` | `/api/project/import` | Import from Excel |
+| `GET` | `/api/project/download` | Download the project as an Eudoxa project file (JSON wrapper around `to_dict()`); see "Project files" |
+| `POST` | `/api/project/open` | Open a project from an uploaded project file or raw store file; only when no project is open (409); 400/413 with `error` (+ `problems`) on bad input |
 | `POST` | `/api/project/scan-cons-file` | Scan an Excel file's `\|CONS\|` tab and return a staged preview (aspects inferred from header row, levels from data); no project required |
 | `POST` | `/api/project/commit-cons-import` | Apply a staged CONS import (`{staged: {...}}` JSON) to the current empty project; creates aspects and levels, then adds consequences |
 | `GET` | `/api/export-aspects` | Download a multi-tab workbook with one `\|ASP\ <name>\|` tab per aspect (levels + relations matrix); filename `{project_name}_aspects.xlsx` |
@@ -724,6 +757,10 @@ Both phases can be limited to one aspect's own VDiffs (plus the shared `NATURAL_
 - **Design decision (2026-09-30): applying means accepting.** Everything pending at *Apply* — the user's own picks *and* relations staged by the partial closure, *View closure* or Maximize/Minimize — is committed as explicit vdcm entries, i.e. the user accepts inferred relations as their own judgements. Known consequences: (a) after Apply the vdcm no longer distinguishes chosen from inferred relations, so retracting a choice later means unsetting its accepted consequences one by one; (b) the accepted set can be too large for a user to realistically review. Alternatives discussed and deferred: committing only user picks and treating the closure as a cached, derived view (needs a vdcm provenance marker → schema 3, and closure-based display); per-Apply provenance ("accepted in Apply #n, derived from pick X") to allow retracting a whole Apply at once.
 
 - **Derivation tracing for inferred relations:** let the user see *why* a relation holds — textually and/or as a graph or tree of derivation chains back to the user's own picks, built from the closure's `adds` (`_entry_premise_keys` / `_topological_sort_adds` already give the premise structure). Would also explain the case where unselecting a partial-closure-inferred cell makes it reappear immediately (`refreshPartialClosure()` recomputes from the remaining picks, which still imply it): show its derivation instead of silently re-adding it. A cheap "which picks are responsible" check is possible by re-running the partial closure (0.01–0.1 s) without each pick in turn.
+
+- **Beta-testing infrastructure** (plan agreed 2026-09-30, in this order): (1) ~~save/open project file, permanent session~~ done — see "Project files"; (2) server-side per-session log (session + request ID per line, request/closure timing, downloadable, size-capped), build shown in the UI, automatic capture of JS errors / failed API calls / server exceptions; (3) "Report a problem": store a bundle (description, session log, project file, build, URL) under a short report ID on the server (total size capped, oldest deleted first) and open a pre-filled `mailto:` with the description + ID, with a copy-text fallback for users without a mail client; bundles are fetched via PythonAnywhere's Files tab, no admin page; (4) PNG export of the vis.js graphs; (5) user manual as one English `/help` page with a section per view, linked context-sensitively from each page's nav bar (`/help#aspect-detail` etc.).
+
+- **`.manager_store` cleanup:** delete store files not used for more than the session lifetime (90 days). Note that a file's mtime only changes on *save*, while the session is renewed on every *request* — base the rule on last access (e.g. touch the file in `load_manager_or_400`) or accept that read-only use doesn't count.
 
 - **Reversing a relation in one Apply** (unset `A≻B` + set `B≻A`, or `≻`→`≺` directly) currently collides — see "Batch apply" → known limitation. Low priority. Possible fix: when a batch contains unsets, stage on committed ∪ pending instead of on the committed closure.
 

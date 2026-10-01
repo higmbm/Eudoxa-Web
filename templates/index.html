@@ -23,9 +23,12 @@
     <h1 class="project-controls">
       {{ project_name }}
       <button id="btnManage">Manage project</button>
+      <button id="btnSaveProject">Save project to file</button>
       <button id="btnExportProject">Export project</button>
       <button id="btnExportCardinal">Cardinal utility export</button>
     </h1>
+    <p class="storage-note">Your project is stored on the server and linked to this browser.
+      Use <em>Save project to file</em> regularly, and always before switching computer or browser.</p>
     <div id="exportProgressBar" class="progress-bar" hidden><div class="progress-bar-fill"></div></div>
 
     <!-- Manage panel (hidden until toggled) -->
@@ -110,9 +113,13 @@
       <input id="fileConsImport" type="file" accept=".xlsx" hidden>
     </div>
     <div class="action-panel" style="margin-top:0.8rem;">
+      <button id="btnOpenProject">Open project from file</button>
+      <input id="fileOpenProject" type="file" accept=".json,application/json" hidden>
       <button id="btnImportProject">Import project from Excel</button>
       <input id="fileImportProject" type="file" accept=".xlsx" hidden>
     </div>
+    <p class="storage-note">Projects are stored on the server and linked to this browser.
+      Use <em>Open project from file</em> to continue with a project you saved to a file earlier.</p>
     <div id="importProgressBar" class="progress-bar" hidden><div class="progress-bar-fill"></div></div>
     <div id="consProgressBar" class="progress-bar" hidden><div class="progress-bar-fill"></div></div>
 
@@ -177,6 +184,40 @@
         const res = await fetch("/api/project", { method: "DELETE" });
         if (res.status === 204) { location.reload(); }
         else { deleteConfirmDlg.close(); alert("Error deleting project."); }
+      });
+    }
+
+    // ── Save project to file / Open project from file ──────────
+    // The download is a plain navigation: the attachment response leaves
+    // the page in place, and the browser handles the (possibly non-ASCII)
+    // filename from Content-Disposition.
+    const btnSaveProject = document.getElementById("btnSaveProject");
+    if (btnSaveProject) {
+      btnSaveProject.addEventListener("click", () => {
+        location.href = "/api/project/download";
+      });
+    }
+
+    const btnOpenProject  = document.getElementById("btnOpenProject");
+    const fileOpenProject = document.getElementById("fileOpenProject");
+    if (btnOpenProject) {
+      btnOpenProject.addEventListener("click", () => fileOpenProject.click());
+      fileOpenProject.addEventListener("change", async () => {
+        const file = fileOpenProject.files[0];
+        if (!file) return;
+        fileOpenProject.value = "";
+        const formData = new FormData();
+        formData.append("file", file);
+        let res = null;
+        try {
+          res = await fetch("/api/project/open", { method: "POST", body: formData });
+        } catch (e) { /* reported below */ }
+        const json = res ? await res.json().catch(() => ({})) : {};
+        if (res && res.ok) { location.reload(); return; }
+        const reason = json.error
+          || (res ? `Unexpected server error (HTTP ${res.status}).`
+                  : "No response from the server.");
+        showImportResult({ error: reason, problems: json.problems });
       });
     }
 
@@ -361,6 +402,16 @@
       if (result.error) {
         importResultEl.className = "import-result import-result-error";
         importResultEl.innerHTML = `<strong>Error:</strong> ${result.error}`;
+        // Problem texts quote names from an uploaded file: add as text, not HTML.
+        if (result.problems && result.problems.length > 0) {
+          const ul = document.createElement("ul");
+          result.problems.forEach(p => {
+            const li = document.createElement("li");
+            li.textContent = p;
+            ul.appendChild(li);
+          });
+          importResultEl.appendChild(ul);
+        }
         importResultEl.hidden = false;
         return;
       }

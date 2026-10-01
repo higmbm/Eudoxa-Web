@@ -2915,3 +2915,41 @@ class EudoxaManager:
                     vdcm[k1][k2] = rel
 
         return mgr
+
+    def integrity_problems(self) -> List[str]:
+        """Structural checks for a manager loaded from an untrusted file (e.g.
+        an uploaded project file). Returns human-readable problems; [] if the
+        structure is sound. Does not check logical consistency (that's what
+        closure() collisions are for) — only that the data can be worked on
+        without KeyErrors: the vdcm is square, covers every vdiff implied by
+        the levels, references only existing aspects/levels, and holds only
+        valid raw relation values; consequences reference existing levels."""
+        problems = []
+        for name, asp in self.aspects.items():
+            if asp.name != name:
+                problems.append(f"Aspect '{name}' is stored under a different name ('{asp.name}').")
+
+        expected = {_vdiff_key(VDiff(an, a, b))
+                    for an, asp in self.aspects.items()
+                    for a in asp.levels for b in asp.levels if a != b}
+        vdcm = self.vdiff_comparison_matrix
+        keys = set(vdcm)
+        for k in sorted(expected - keys, key=repr):
+            problems.append(f"Value difference matrix lacks {k.aspect_name}: {k!r}.")
+        for k in sorted(keys - expected - {NATURAL_ZERO}, key=repr):
+            problems.append(f"Value difference matrix has unknown entry {k.aspect_name}: {k!r}.")
+        valid_rels = (TRUE, FALSE, UNDEFINED)
+        for k1, row in vdcm.items():
+            if set(row) != keys:
+                problems.append(f"Value difference matrix row {k1!r} is incomplete.")
+            bad = [rel for rel in row.values() if rel not in valid_rels]
+            if bad:
+                problems.append(f"Value difference matrix row {k1!r} has invalid values {bad[:3]}.")
+
+        for short, cons in self.consequences.items():
+            for an, level in cons.aspect_levels.items():
+                if an not in self.aspects:
+                    problems.append(f"Consequence '{short}' refers to unknown aspect '{an}'.")
+                elif level is not None and level not in self.aspects[an].levels:
+                    problems.append(f"Consequence '{short}' refers to unknown level '{level}' of '{an}'.")
+        return problems
