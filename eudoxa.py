@@ -1253,36 +1253,53 @@ class EudoxaManager:
         return pairs
 
     def try_set_aspect_level_relation(self, aspect: str, la, lb, rel: str) -> Tuple:
-        """Validate and commit a relation addition using the closure as a staging area.
+        """Validate and commit a single relation addition.
+        Thin wrapper around try_set_aspect_level_relations."""
+        return self.try_set_aspect_level_relations(aspect, [(la, lb, rel)])
+
+    def try_set_aspect_level_relations(self, aspect: str, changes: List[Tuple]) -> Tuple:
+        """Validate and commit a batch of (la, lb, rel) relation changes for
+        *aspect* atomically, using the closure as a staging area.
 
         Flow:
           1. Compute the current closure from the matrix.
-          2. Apply the requested addition to the closure (not the matrix).
+          2. Apply all requested changes, in order, to the closure (not the matrix).
           3. If that causes an immediate collision, reject and return it.
           4. Recompute the closure of the staged dict.
           5. If the recomputed closure has collisions, reject and return them.
-          6. If clean, commit only the explicit addition to the matrix.
+          6. If clean, commit only the explicit changes to the matrix.
              Return direct adds and any inferred additions from the closure.
+
+        Exactly two full closures per call, however many changes the batch
+        holds. Starting step 4 from the closed matrix (rather than the raw
+        matrix) means inferred_adds lists only consequences that are new
+        relative to the committed closure, not every derivable entry. Because
+        the closure is monotone, a batch is rejected exactly when applying its
+        changes one at a time would have hit a collision at some step; the
+        offending change can't be singled out, only the colliding relations.
+        On rejection nothing is written.
         """
         a = self.get_aspect(aspect)
-        a_type = a.data_type
-        la_str, lb_str = str(la), str(lb)
         if a is None:
             raise ValueError(f"Aspect '{aspect}' does not exist.")
-        if la_str not in a.levels:
-            raise ValueError(f"Aspect level '{la}' [{a_type}] does not exist.")
-        if lb_str not in a.levels:
-            raise ValueError(f"Aspect level '{lb}' [{a_type}] does not exist.")
+        a_type = a.data_type
+        str_changes = []
+        for la, lb, rel in changes:
+            la_str, lb_str = str(la), str(lb)
+            if la_str not in a.levels:
+                raise ValueError(f"Aspect level '{la}' [{a_type}] does not exist.")
+            if lb_str not in a.levels:
+                raise ValueError(f"Aspect level '{lb}' [{a_type}] does not exist.")
+            str_changes.append((la_str, lb_str, rel))
 
         # Step 1: compute current closure as the staging area
         staged, _, _ = self.closure()
 
-        # Step 2: apply the requested addition to the staging area
-        _, staged_colls = _apply_al_relation(staged, aspect, la_str, lb_str, rel)
-
-        # Step 3: immediate collision in the staged area — reject
-        if staged_colls:
-            return ([], staged_colls, [])
+        # Step 2-3: apply all changes to the staging area; reject on immediate collision
+        for la_str, lb_str, rel in str_changes:
+            _, staged_colls = _apply_al_relation(staged, aspect, la_str, lb_str, rel)
+            if staged_colls:
+                return ([], staged_colls, [])
 
         # Step 4-5: recompute closure on the staged dict and check for inferred collisions
         # Temporarily swap the matrix for the staged dict to reuse self.closure()
@@ -1291,12 +1308,14 @@ class EudoxaManager:
         _, inferred_adds, inferred_colls = self.closure()
         self.vdiff_comparison_matrix = original_matrix
 
-        # Step 5: inferred collision — reject
         if inferred_colls:
             return ([], inferred_colls, [])
 
-        # Step 6: clean — commit only the explicit addition to the real matrix
-        adds, colls = _apply_al_relation(original_matrix, aspect, la_str, lb_str, rel)
+        # Step 6: clean — commit only the explicit changes to the real matrix
+        adds = []
+        for la_str, lb_str, rel in str_changes:
+            c_adds, _ = _apply_al_relation(original_matrix, aspect, la_str, lb_str, rel)
+            adds.extend(c_adds)
         return (adds, [], inferred_adds)
 
     def get_aspect_level_relation(self, aspect: str, la, lb, matrix=None) -> str:
@@ -1440,73 +1459,71 @@ class EudoxaManager:
           ⊏  →  vd2⊒vd1  AND  vd1⋣vd2
           —  →  unset all four VDCM entries for (vd1,vd2)
 
-        Flow (mirrors try_set_aspect_level_relation):
+        Thin wrapper around try_set_vdiff_order_relations.
+        """
+        return self.try_set_vdiff_order_relations([(vd1, vd2, order_rel)])
+
+    def try_set_vdiff_order_relations(self, changes: List[Tuple]) -> Tuple:
+        """Validate and commit a batch of (vd1, vd2, order_rel) changes
+        atomically, using a full VDCM staging copy.
+
+        Flow:
           1. Deep-copy the full VDCM as staging area.
-          2. Apply set_rel to staging. Reject on immediate collision.
-          3. Recompute closure on staging. Reject on inferred collision.
-          4. If clean, commit set_rel to the real VDCM.
+          2. Apply all changes, in order, to staging. Reject on immediate collision.
+          3. Compute the closure of staging once. Reject on inferred collision.
+          4. If clean, commit all changes to the real VDCM.
              Return (adds, [], inferred_adds).
+
+        One full closure per call, however many changes the batch holds.
+        On rejection nothing is written.
         """
         import copy
 
-        # Decompose vd1/vd2 into (aspect, la, lb) for set_rel
-        an1, l1a, l1b = vd1.aspect_name, vd1.from_level, vd1.to_level
-        an2, l2a, l2b = vd2.aspect_name, vd2.from_level, vd2.to_level
-
-        origin = ['SETVDREL', [vd1, order_rel, vd2]]
-
         # ── Step 1: deep-copy the VDCM ──────────────────────────
-        staged_matrix = copy.deepcopy(self.vdiff_comparison_matrix)
-
-        # ── Step 2: apply to staging ─────────────────────────────
-        staged_adds, staged_colls = [], []
         original_matrix = self.vdiff_comparison_matrix
+        staged_matrix = copy.deepcopy(original_matrix)
+
+        # ── Step 2: apply to staging; immediate collision — reject
         self.vdiff_comparison_matrix = staged_matrix
+        try:
+            for vd1, vd2, order_rel in changes:
+                _, staged_colls = self._write_vdiff_order(vd1, vd2, order_rel)
+                if staged_colls:
+                    return ([], staged_colls, [])
 
-        if order_rel == UNDEFINED:
-            # Unset all four entries for this vdiff pair
-            for va, vb in [(vd1, vd2), (vd2, vd1)]:
-                app_ac(origin,
-                       set_vdiff_relation(staged_matrix, va, vb, UNDEFINED),
-                       staged_adds, staged_colls)
-                app_ac(origin,
-                       set_vdiff_relation(staged_matrix, vb, va, UNDEFINED),
-                       staged_adds, staged_colls)
-        else:
-            s_adds, s_colls = self.set_rel(an1, l1a, l1b, an2, l2a, l2b, order_rel)
-            staged_adds.extend(s_adds)
-            staged_colls.extend(s_colls)
-
-        self.vdiff_comparison_matrix = original_matrix
-
-        # ── Step 3: immediate collision — reject ─────────────────
-        if staged_colls:
-            return ([], staged_colls, [])
-
-        # ── Step 4: recompute closure on staging, check inferred ─
-        self.vdiff_comparison_matrix = staged_matrix
-        _, inferred_adds, inferred_colls = self.closure()
-        self.vdiff_comparison_matrix = original_matrix
+            # ── Step 3: closure on staging, check inferred ──────
+            _, inferred_adds, inferred_colls = self.closure()
+        finally:
+            self.vdiff_comparison_matrix = original_matrix
 
         if inferred_colls:
             return ([], inferred_colls, [])
 
-        # ── Step 5: clean — commit to the real VDCM ─────────────
+        # ── Step 4: clean — commit to the real VDCM ─────────────
+        adds = []
+        for vd1, vd2, order_rel in changes:
+            c_adds, _ = self._write_vdiff_order(vd1, vd2, order_rel)
+            adds.extend(c_adds)
+        return (adds, [], inferred_adds)
+
+    def _write_vdiff_order(self, vd1: VDiff, vd2: VDiff, order_rel: str) -> Tuple:
+        """Write one vdiff order relation into self.vdiff_comparison_matrix
+        (whichever matrix is currently swapped in). Returns (adds, colls)."""
+        origin = ['SETVDREL', [vd1, order_rel, vd2]]
         adds, colls = [], []
         if order_rel == UNDEFINED:
+            # Unset all four entries for this vdiff pair
+            matrix = self.vdiff_comparison_matrix
             for va, vb in [(vd1, vd2), (vd2, vd1)]:
-                app_ac(origin,
-                       set_vdiff_relation(original_matrix, va, vb, UNDEFINED),
-                       adds, colls)
-                app_ac(origin,
-                       set_vdiff_relation(original_matrix, vb, va, UNDEFINED),
-                       adds, colls)
+                app_ac(origin, set_vdiff_relation(matrix, va, vb, UNDEFINED), adds, colls)
+                app_ac(origin, set_vdiff_relation(matrix, vb, va, UNDEFINED), adds, colls)
         else:
-            c_adds, c_colls = self.set_rel(an1, l1a, l1b, an2, l2a, l2b, order_rel)
-            adds.extend(c_adds)
-            colls.extend(c_colls)
-
-        return (adds, [], inferred_adds)
+            s_adds, s_colls = self.set_rel(vd1.aspect_name, vd1.from_level, vd1.to_level,
+                                           vd2.aspect_name, vd2.from_level, vd2.to_level,
+                                           order_rel)
+            adds.extend(s_adds)
+            colls.extend(s_colls)
+        return (adds, colls)
 
     def set_vdiff_relation(self, vd1: VDiff, vd2: VDiff, new_rel: str) -> Tuple:
         return set_vdiff_relation(self.vdiff_comparison_matrix, vd1, vd2, new_rel)
@@ -2898,3 +2915,41 @@ class EudoxaManager:
                     vdcm[k1][k2] = rel
 
         return mgr
+
+    def integrity_problems(self) -> List[str]:
+        """Structural checks for a manager loaded from an untrusted file (e.g.
+        an uploaded project file). Returns human-readable problems; [] if the
+        structure is sound. Does not check logical consistency (that's what
+        closure() collisions are for) — only that the data can be worked on
+        without KeyErrors: the vdcm is square, covers every vdiff implied by
+        the levels, references only existing aspects/levels, and holds only
+        valid raw relation values; consequences reference existing levels."""
+        problems = []
+        for name, asp in self.aspects.items():
+            if asp.name != name:
+                problems.append(f"Aspect '{name}' is stored under a different name ('{asp.name}').")
+
+        expected = {_vdiff_key(VDiff(an, a, b))
+                    for an, asp in self.aspects.items()
+                    for a in asp.levels for b in asp.levels if a != b}
+        vdcm = self.vdiff_comparison_matrix
+        keys = set(vdcm)
+        for k in sorted(expected - keys, key=repr):
+            problems.append(f"Value difference matrix lacks {k.aspect_name}: {k!r}.")
+        for k in sorted(keys - expected - {NATURAL_ZERO}, key=repr):
+            problems.append(f"Value difference matrix has unknown entry {k.aspect_name}: {k!r}.")
+        valid_rels = (TRUE, FALSE, UNDEFINED)
+        for k1, row in vdcm.items():
+            if set(row) != keys:
+                problems.append(f"Value difference matrix row {k1!r} is incomplete.")
+            bad = [rel for rel in row.values() if rel not in valid_rels]
+            if bad:
+                problems.append(f"Value difference matrix row {k1!r} has invalid values {bad[:3]}.")
+
+        for short, cons in self.consequences.items():
+            for an, level in cons.aspect_levels.items():
+                if an not in self.aspects:
+                    problems.append(f"Consequence '{short}' refers to unknown aspect '{an}'.")
+                elif level is not None and level not in self.aspects[an].levels:
+                    problems.append(f"Consequence '{short}' refers to unknown level '{level}' of '{an}'.")
+        return problems

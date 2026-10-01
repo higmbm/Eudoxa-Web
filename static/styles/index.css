@@ -18,6 +18,13 @@
   margin-bottom: 0.5rem;
 }
 
+/* Hint about server-side storage and saving to file */
+.storage-note {
+  margin: 0.4rem 0 0;
+  color: #666;
+  font-size: 0.85rem;
+}
+
 /* ── Action panel (manage project / create project) ─────────── */
 .action-panel {
   display: flex;

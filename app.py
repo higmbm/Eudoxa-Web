@@ -1,5 +1,7 @@
 import logging
 import os
+import subprocess
+from datetime import datetime, timedelta, timezone
 import openpyxl
 from flask import Flask, session, request, jsonify, abort
 from flask import render_template
@@ -14,11 +16,37 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------
 app.secret_key = os.getenv("SECRET_KEY") or "dev-secret-change-me"
 
+# The session cookie (which links a browser to its project file) is permanent
+# and renewed on every request, so a project survives closing the browser and
+# is only lost after 90 days without any visit.
+app.permanent_session_lifetime = timedelta(days=90)
+
 # Store manager data server-side to avoid Flask's 4 KB cookie limit.
 _STORE_DIR = os.getenv("MANAGER_STORE_DIR") or os.path.join(
     os.path.dirname(os.path.abspath(__file__)), ".manager_store"
 )
 os.makedirs(_STORE_DIR, exist_ok=True)
+
+
+def _read_build() -> str:
+    """Identify the running code as '<short commit hash> (<commit date>)',
+    read once at startup; 'unknown' when not running from a git checkout."""
+    try:
+        out = subprocess.run(
+            ["git", "log", "-1", "--format=%h (%cs)"],
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            capture_output=True, text=True, timeout=5,
+        )
+        return out.stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+BUILD = _read_build()
+
+# Project files ("Save project to file" / "Open project from file")
+PROJECT_FILE_FORMAT  = "eudoxa-project"
+PROJECT_FILE_VERSION = 1
+MAX_PROJECT_FILE_BYTES = 10_000_000
 
 
 # -----------------------------------------------------------
@@ -44,6 +72,7 @@ def _get_sid() -> str:
     import uuid
     if "sid" not in session:
         session["sid"] = uuid.uuid4().hex
+        session.permanent = True
     return session["sid"]
 
 
@@ -64,11 +93,25 @@ def load_manager_or_400():
 
 
 def save_manager(mgr: EudoxaManager):
-    """Persist the manager to the server-side store."""
+    """Persist the manager to the server-side store. The project name and
+    author (kept in the session) are stored alongside, so a store file is
+    self-describing; from_dict ignores these extra keys."""
     import json
     sid = _get_sid()
+    data = mgr.to_dict()
+    data["project_name"] = session.get("project_name", "")
+    data["author"]       = session.get("author", "")
     with open(_store_path(sid), "w", encoding="utf-8") as f:
-        json.dump(mgr.to_dict(), f, ensure_ascii=False)
+        json.dump(data, f, ensure_ascii=False)
+
+
+@app.before_request
+def keep_session_alive():
+    """Mark existing sessions permanent so the cookie gets an expiry date and
+    is re-issued (renewing the 90 days) on every request. Sessions created
+    before this was introduced are upgraded on their next request."""
+    if "sid" in session and not session.permanent:
+        session.permanent = True
 
 
 @app.get("/favicon.ico")
@@ -175,6 +218,10 @@ def rename_project():
     elif "author" in data:
         session.pop("author", None)
 
+    # Re-save so the name/author copy in the store file stays current.
+    if os.path.exists(_store_path(session.get("sid", ""))):
+        save_manager(load_manager_or_400())
+
     return {"message": "Project renamed", "project_name": name}, 200
 
 @app.get("/api/project")
@@ -204,6 +251,98 @@ def delete_project():
         try: os.remove(_store_path(sid))
         except FileNotFoundError: pass
     return "", 204
+
+
+def _safe_filename(name: str) -> str:
+    """Replace characters that are invalid in Windows/macOS/Linux filenames."""
+    cleaned = "".join("_" if c in '\\/:*?"<>|' or ord(c) < 32 else c for c in name).strip()
+    return cleaned or "project"
+
+
+@app.get("/api/project/download")
+def download_project():
+    """Download the current project as an Eudoxa project file (JSON): the
+    manager's to_dict() wrapped with name, author, build and export time.
+    Opened again via POST /api/project/open."""
+    import io, json
+    from flask import send_file
+    mgr = load_manager_or_400()
+    name = session.get("project_name", "")
+    payload = {
+        "format":         PROJECT_FILE_FORMAT,
+        "format_version": PROJECT_FILE_VERSION,
+        "build":          BUILD,
+        "exported_at":    datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "project_name":   name,
+        "author":         session.get("author", ""),
+        "project":        mgr.to_dict(),
+    }
+    buf = io.BytesIO(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+    date = datetime.now().strftime("%Y-%m-%d")
+    return send_file(buf, mimetype="application/json", as_attachment=True,
+                     download_name=f"{_safe_filename(name)}_{date}.eudoxa.json")
+
+
+@app.post("/api/project/open")
+def open_project():
+    """Open a project from an uploaded project file. Accepts the wrapper
+    written by /api/project/download, or a raw .manager_store file. Only
+    allowed when no project is open (the user deletes the current one first)."""
+    import json
+    sid = session.get("sid")
+    if "project_name" in session and sid and os.path.exists(_store_path(sid)):
+        return {"error": "A project is already open. Delete it first "
+                         "(Manage project → Delete) to open another one."}, 409
+
+    f = request.files.get("file")
+    if not f:
+        return {"error": "No file uploaded."}, 400
+    raw = f.stream.read(MAX_PROJECT_FILE_BYTES + 1)
+    if len(raw) > MAX_PROJECT_FILE_BYTES:
+        return {"error": f"The file is too large (limit "
+                         f"{MAX_PROJECT_FILE_BYTES // 1_000_000} MB)."}, 413
+
+    not_eudoxa = "This is not an Eudoxa project file."
+    try:
+        data = json.loads(raw.decode("utf-8-sig"))
+    except (UnicodeDecodeError, ValueError):
+        return {"error": f"{not_eudoxa} (It could not be read as JSON.)"}, 400
+    if not isinstance(data, dict):
+        return {"error": not_eudoxa}, 400
+
+    if data.get("format") == PROJECT_FILE_FORMAT:
+        version = data.get("format_version")
+        if not isinstance(version, int) or version > PROJECT_FILE_VERSION:
+            return {"error": "This project file was saved by a newer version "
+                             "of Eudoxa and cannot be opened here."}, 400
+        proj = data.get("project")
+    elif "__schema__" in data and "aspects" in data:
+        proj = data      # raw store file (.manager_store/<sid>.json)
+    else:
+        return {"error": not_eudoxa}, 400
+    if not isinstance(proj, dict):
+        return {"error": not_eudoxa}, 400
+
+    try:
+        mgr = EudoxaManager.from_dict(proj)
+        problems = mgr.integrity_problems()
+    except Exception:
+        logger.exception("Failed to load uploaded project file")
+        return {"error": "The project file is damaged and could not be opened."}, 400
+    if problems:
+        return {"error": "The project file is inconsistent and could not be opened.",
+                "problems": problems[:20]}, 400
+
+    stem = (f.filename or "").removesuffix(".json").removesuffix(".eudoxa")
+    name = (str(data.get("project_name") or "").strip() or stem.strip()
+            or "Opened project")
+    author = str(data.get("author") or "").strip()
+    session.pop("author", None)
+    session["project_name"] = name
+    if author:
+        session["author"] = author
+    save_manager(mgr)
+    return {"message": "Project opened", "project_name": name}, 201
 
 
 @app.post("/api/project/import")
@@ -823,28 +962,22 @@ def batch_patch_relations(aspect_name):
             if lvl and lvl not in aspect.levels:
                 return {"error": f"Level '{lvl}' not found in aspect '{aspect_name}'"}, 404
 
-    all_adds          = []
-    all_inferred_adds = []
+    # One staging pass over the whole batch (two full closures in total, not
+    # two per change); nothing is written if the batch collides.
+    try:
+        adds, colls, inferred_adds = mgr.try_set_aspect_level_relations(
+            aspect_name, [(ch["la"], ch["lb"], ch["relation"]) for ch in changes]
+        )
+    except ValueError as e:
+        return {"error": str(e)}, 404
 
-    for ch in changes:
-        la, lb, rel = ch["la"], ch["lb"], ch["relation"]
-        try:
-            adds, colls, inferred_adds = mgr.try_set_aspect_level_relation(
-                aspect_name, la, lb, rel
-            )
-        except ValueError as e:
-            return {"error": str(e)}, 404
-
-        if colls:
-            return {"colls": [_fmt_al_coll(c) for c in colls]}, 409
-
-        all_adds.extend(adds)
-        all_inferred_adds.extend(inferred_adds)
+    if colls:
+        return {"colls": [_fmt_al_coll(c) for c in colls]}, 409
 
     save_manager(mgr)
     return {
-        "adds":          [_fmt_al_entry(e) for e in all_adds],
-        "inferred_adds": [_fmt_al_entry(e) for e in all_inferred_adds]
+        "adds":          [_fmt_al_entry(e) for e in adds],
+        "inferred_adds": [_fmt_al_entry(e) for e in inferred_adds]
     }, 200
 
 
@@ -1267,8 +1400,8 @@ def patch_vdiff_relation(an1, l1a, l1b, an2, l2a, l2b):
 def batch_patch_vdiff_relations():
     """Apply a batch of vdiff order relation changes atomically.
     Body: { "changes": [{ "an1", "l1a", "l1b", "an2", "l2a", "l2b", "relation" }, ...] }
-    Changes are applied sequentially; if any causes a collision the whole batch
-    is aborted (manager is not saved) and 409 is returned with collision details.
+    All changes are staged together and checked with a single closure; if the
+    batch collides nothing is saved and 409 is returned with collision details.
     Response on success:  { "adds": [...], "inferred_adds": [...] }
     Response on collision: { "colls": [...] }, 409
     """
@@ -1295,32 +1428,24 @@ def batch_patch_vdiff_relations():
             if lb != "*" and lb not in mgr.aspects[asp].levels:
                 return {"error": f"Level '{lb}' not found in aspect '{asp}'"}, 404
 
-    # ── Apply changes sequentially; abort all on first collision ─────────────
-    all_adds          = []
-    all_inferred_adds = []
+    # ── Stage the whole batch; abort all on collision ────────────────────────
+    batch = [(_make_vd(ch["an1"], ch["l1a"], ch["l1b"]),
+              _make_vd(ch["an2"], ch["l2a"], ch["l2b"]),
+              ch["relation"]) for ch in changes]
+    try:
+        adds, colls, inferred_adds = mgr.try_set_vdiff_order_relations(batch)
+    except Exception as e:
+        logger.exception("Failed to set vdiff relations in batch")
+        return {"error": str(e)}, 500
 
-    for ch in changes:
-        vd1 = _make_vd(ch["an1"], ch["l1a"], ch["l1b"])
-        vd2 = _make_vd(ch["an2"], ch["l2a"], ch["l2b"])
-        try:
-            adds, colls, inferred_adds = mgr.try_set_vdiff_order_relation(
-                vd1, vd2, ch["relation"]
-            )
-        except Exception as e:
-            logger.exception("Failed to set vdiff relation in batch")
-            return {"error": str(e)}, 500
-
-        if colls:
-            # Collision — abort entire batch (manager not saved)
-            return {"colls": [_fmt_coll(c) for c in colls]}, 409
-
-        all_adds.extend(adds)
-        all_inferred_adds.extend(inferred_adds)
+    if colls:
+        # Collision — abort entire batch (manager not saved)
+        return {"colls": [_fmt_coll(c) for c in colls]}, 409
 
     save_manager(mgr)
     return {
-        "adds":          [_fmt_entry(a) for a in all_adds],
-        "inferred_adds": [_fmt_entry(a) for a in all_inferred_adds]
+        "adds":          [_fmt_entry(a) for a in adds],
+        "inferred_adds": [_fmt_entry(a) for a in inferred_adds]
     }, 200
 
 
